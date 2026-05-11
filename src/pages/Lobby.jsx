@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Globe, ArrowRight, User, ArrowLeft } from 'lucide-react';
-import { socket, connectSocket } from '../socket';
+import { supabase } from '../lib/supabase';
 
 export default function Lobby() {
   const navigate = useNavigate();
@@ -10,23 +10,59 @@ export default function Lobby() {
   const [error, setError] = useState('');
   const [publicRooms, setPublicRooms] = useState([]);
 
+  const fetchRooms = async () => {
+    try {
+      const { data: roomsData, error: roomsError } = await supabase
+        .from('rooms')
+        .select(`
+          *,
+          players(count)
+        `)
+        .eq('type', 'public')
+        .eq('status', 'waiting')
+        .order('created_at', { ascending: false });
+
+      if (roomsError) throw roomsError;
+
+      const formatted = roomsData.map(r => ({
+        code: r.code,
+        host: r.host_name,
+        players: r.players[0]?.count || 0,
+        maxPlayers: 8,
+        status: r.status
+      }));
+
+      setPublicRooms(formatted);
+    } catch (err) {
+      console.error('Error fetching rooms:', err);
+    }
+  };
+
   useEffect(() => {
-    connectSocket();
+    fetchRooms();
 
-    socket.emit('requestRoomList');
-
-    const handleRoomList = (rooms) => {
-      setPublicRooms(rooms);
-    };
-
-    socket.on('roomList', handleRoomList);
+    // Subscribe to room changes
+    const channel = supabase
+      .channel('lobby-rooms')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => {
+        fetchRooms();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, () => {
+        fetchRooms();
+      })
+      .subscribe();
 
     return () => {
-      socket.off('roomList', handleRoomList);
+      supabase.removeChannel(channel);
     };
   }, []);
 
-  const handleJoin = (e, targetCode = null) => {
+  const generateRoomCode = (type) => {
+    const prefix = type === 'public' ? 'PUB-' : 'PRV-';
+    return `${prefix}${Math.floor(100 + Math.random() * 900)}`;
+  };
+
+  const handleJoin = async (e, targetCode = null) => {
     if (e) e.preventDefault();
     const codeToJoin = (targetCode || roomCode).trim().toUpperCase();
 
@@ -39,47 +75,122 @@ export default function Lobby() {
       return;
     }
 
-    socket.emit('joinRoom', { roomCode: codeToJoin, playerName: playerName.trim() }, (response) => {
-      if (response.success) {
-        navigate('/waiting-room', { 
-          state: { 
-            roomCode: codeToJoin, 
-            playerName: playerName.trim(), 
-            isHost: false,
-            room: response.room
-          } 
-        });
-      } else {
-        setError(response.message || 'Failed to join room');
+    try {
+      // 1. Check if room exists
+      const { data: room, error: roomError } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('code', codeToJoin)
+        .single();
+
+      if (roomError || !room) {
+        setError('Room tidak ditemukan');
+        return;
       }
-    });
+
+      if (room.status !== 'waiting') {
+        setError('Game sedang berlangsung');
+        return;
+      }
+
+      // 2. Check player count
+      const { count, error: countError } = await supabase
+        .from('players')
+        .select('*', { count: 'exact', head: true })
+        .eq('room_code', codeToJoin);
+
+      if (countError) throw countError;
+      if (count >= 8) {
+        setError('Room sudah penuh');
+        return;
+      }
+
+      // 3. Join room
+      const { error: joinError } = await supabase
+        .from('players')
+        .insert([{ 
+          room_code: codeToJoin, 
+          name: playerName.trim(),
+          ready: false,
+          score: 0,
+          current_question: 1,
+          finished: false
+        }]);
+
+      if (joinError) {
+        if (joinError.code === '23505') {
+          setError('Nama sudah digunakan dalam room');
+        } else {
+          throw joinError;
+        }
+        return;
+      }
+
+      navigate('/waiting-room', { 
+        state: { 
+          roomCode: codeToJoin, 
+          playerName: playerName.trim(), 
+          isHost: false 
+        } 
+      });
+    } catch (err) {
+      console.error('Join error:', err);
+      setError('Gagal masuk ke room');
+    }
   };
 
-  const createRoomWithCode = (type) => {
+  const createRoom = async (type) => {
     if (!playerName.trim()) {
       setError('Please enter your name first');
       return;
     }
 
-    socket.emit('createRoom', { type, playerName: playerName.trim(), gameType: 'color-race' }, (response) => {
-      if (response.success) {
-        navigate('/select-mode', { 
-          state: { 
-            type, 
-            roomCode: response.room.code, 
-            playerName: playerName.trim(), 
-            isHost: true,
-            room: response.room
-          } 
-        });
-      } else {
-        setError('Failed to create room');
-      }
-    });
+    const code = generateRoomCode(type);
+
+    try {
+      // 1. Create room
+      const { error: roomError } = await supabase
+        .from('rooms')
+        .insert([{ 
+          code, 
+          type, 
+          host_name: playerName.trim(),
+          status: 'waiting',
+          game_type: 'color-race'
+        }]);
+
+      if (roomError) throw roomError;
+
+      // 2. Join as host
+      const { error: joinError } = await supabase
+        .from('players')
+        .insert([{ 
+          room_code: code, 
+          name: playerName.trim(),
+          ready: true, // Host is auto ready
+          score: 0,
+          current_question: 1,
+          finished: false
+        }]);
+
+      if (joinError) throw joinError;
+
+      navigate('/select-mode', { 
+        state: { 
+          type, 
+          roomCode: code, 
+          playerName: playerName.trim(), 
+          isHost: true 
+        } 
+      });
+    } catch (err) {
+      console.error('Create error:', err);
+      setError('Gagal membuat room');
+    }
   };
 
-  const handleCreatePublic = () => createRoomWithCode('public');
-  const handleCreatePrivate = () => createRoomWithCode('private');
+  const handleCreatePublic = () => createRoom('public');
+  const handleCreatePrivate = () => createRoom('private');
 
   return (
     <div className="container">
