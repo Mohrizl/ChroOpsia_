@@ -11,23 +11,23 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.4",
     "lucide-react": "^1.14.0",
     "pdf-export-images": "^1.2.0",
     "pdf-parse": "^2.4.5",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.15.0",
-    "express": "^4.18.4",
     "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1",
-    "cors": "^2.8.5"
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
-    "concurrently": "^8.2.0",
     "@eslint/js": "^10.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^8.2.0",
     "eslint": "^10.2.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
