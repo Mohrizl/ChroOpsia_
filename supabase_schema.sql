@@ -12,6 +12,7 @@ CREATE TABLE rooms (
   status TEXT DEFAULT 'waiting', -- 'waiting', 'playing', 'finished'
   game_type TEXT DEFAULT 'color-race',
   host_name TEXT NOT NULL,
+  time_limit INTEGER DEFAULT 15,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

@@ -29,8 +29,8 @@ export default function IshiharaGame() {
   const location = useLocation();
   const { roomCode, playerName, isHost } = location.state || {};
   
-  const [setupMode, setSetupMode] = useState(true);
-  const [timePerQuestion, setTimePerQuestion] = useState(15);
+  const [setupMode, setSetupMode] = useState(!roomCode);
+  const [timePerQuestion, setTimePerQuestion] = useState(20);
   const [questions, setQuestions] = useState([]);
   const [currentQ, setCurrentQ] = useState(0);
   const [score, setScore] = useState(0);
@@ -39,6 +39,7 @@ export default function IshiharaGame() {
   const [waitingForOthers, setWaitingForOthers] = useState(false);
   const [correctCount, setCorrectCount] = useState(0);
   const [allPlayers, setAllPlayers] = useState([]);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const scoreRef = useRef(0);
   const correctRef = useRef(0);
@@ -68,60 +69,72 @@ export default function IshiharaGame() {
         } 
       });
     }
+    return { players: sorted, room: rData };
   }, [roomCode, navigate, location.state]);
+
+  useEffect(() => {
+    if (roomCode) {
+      supabase.from('rooms').select('*').eq('code', roomCode).single().then(({ data }) => {
+        if (data) {
+          setTimePerQuestion(data.time_limit || 20);
+          const qList = [...ISHIHARA_IMAGES].sort(() => Math.random() - 0.5).slice(0, totalQuestions).map(buildQuestion);
+          setQuestions(qList);
+          setTimeLeft(data.time_limit || 20);
+          setSetupMode(false);
+        }
+      });
+    }
+  }, [roomCode]);
 
   useEffect(() => {
     if (!roomCode) return;
     fetchGameState();
-
     const channel = supabase.channel(`game-${roomCode}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, () => {
         fetchGameState();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` }, (payload) => {
-        if (payload.new.status === 'finished') {
-          fetchGameState();
-        }
+        if (payload.new.status === 'finished') fetchGameState();
       })
       .subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, [roomCode, fetchGameState]);
 
-  // Host manages bots and end-game detection
   useEffect(() => {
-    if (!isHost || !roomCode || setupMode || waitingForOthers) return;
-
+    if (!isHost || !roomCode || setupMode) return;
     const botInterval = setInterval(async () => {
-      const { data: pData } = await supabase.from('players').select('*').eq('room_code', roomCode);
-      const humans = pData.filter(p => !p.is_bot);
-      const bots = pData.filter(p => p.is_bot && !p.finished);
+      const { players, room } = await fetchGameState();
+      if (room.status === 'finished') {
+        clearInterval(botInterval);
+        return;
+      }
+      const humans = players.filter(p => !p.is_bot);
+      const bots = players.filter(p => p.is_bot && !p.finished);
 
-      // 1. Advance bots
-      const botUpdates = bots.map(async (bot) => {
-        if (Math.random() < 0.8) { // Higher chance
-          const newQ = bot.current_question + (Math.random() > 0.5 ? 2 : 1);
-          const newScore = bot.score + Math.floor(Math.random() * 400 + 500);
-          return supabase.from('players').update({
-            current_question: newQ,
-            score: newScore,
-            finished: newQ > 14
-          }).eq('id', bot.id);
-        }
-        return null;
-      });
+      if (bots.length > 0) {
+        const botUpdates = bots.map(async (bot) => {
+          if (Math.random() < 0.7) {
+            const newQ = bot.current_question + (Math.random() > 0.6 ? 2 : 1);
+            const botScoreAdd = Math.floor(400 * (Math.random() * 0.5 + 0.5));
+            const newScore = bot.score + botScoreAdd;
+            return supabase.from('players').update({
+              current_question: newQ,
+              score: newScore,
+              finished: newQ > totalQuestions
+            }).eq('id', bot.id);
+          }
+          return null;
+        });
+        await Promise.all(botUpdates.filter(u => u !== null));
+      }
 
-      await Promise.all(botUpdates.filter(u => u !== null));
-
-      // 2. Check if all humans finished
-      if (humans.every(h => h.finished)) {
+      if (humans.length > 0 && humans.every(h => h.finished)) {
         await supabase.from('rooms').update({ status: 'finished' }).eq('code', roomCode);
         clearInterval(botInterval);
       }
     }, 2000);
-
     return () => clearInterval(botInterval);
-  }, [isHost, roomCode, setupMode, waitingForOthers]);
+  }, [isHost, roomCode, setupMode, fetchGameState]);
 
   const startGame = () => {
     const qList = [...ISHIHARA_IMAGES].sort(() => Math.random() - 0.5).slice(0, totalQuestions).map(buildQuestion);
@@ -134,29 +147,16 @@ export default function IshiharaGame() {
     setTimeLeft(timePerQuestion);
   };
 
-  const handleFinishGame = async (finalScore, finalWrongCount, finalCorrectCount) => {
-    if (roomCode) {
-      setWaitingForOthers(true);
-      await supabase.from('players').update({
-        finished: true,
-        score: finalScore,
-        correct_count: finalCorrectCount,
-        wrong_count: finalWrongCount
-      }).eq('room_code', roomCode).eq('name', playerName);
-    } else {
-      navigate('/score', { 
-        state: { score: finalScore, mode: 'Ishihara Test', wrongCount: finalWrongCount, correctCount: finalCorrectCount, ...location.state } 
-      });
-    }
-  };
-
   const nextQuestion = (isCorrect) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+
     let ns = score;
     let ncc = correctCount;
     let nwc = wrongCount;
 
     if (isCorrect) {
-      const pts = Math.max(100, Math.floor(800 * (timeLeft / timePerQuestion)));
+      const pts = Math.max(50, Math.floor(400 * (timeLeft / timePerQuestion)));
       ns += pts;
       ncc += 1;
       setScore(ns);
@@ -179,8 +179,23 @@ export default function IshiharaGame() {
     if (currentQ < totalQuestions - 1) {
       setCurrentQ(c => c + 1);
       setTimeLeft(timePerQuestion);
+      setTimeout(() => setIsProcessing(false), 200);
     } else {
       handleFinishGame(ns, nwc, ncc);
+    }
+  };
+
+  const handleFinishGame = async (fs, fwc, fcc) => {
+    if (roomCode) {
+      setWaitingForOthers(true);
+      await supabase.from('players').update({
+        finished: true,
+        score: fs,
+        correct_count: fcc,
+        wrong_count: fwc
+      }).eq('room_code', roomCode).eq('name', playerName);
+    } else {
+      navigate('/score', { state: { score: fs, mode: 'Ishihara Test', wrongCount: fwc, correctCount: fcc, ...location.state } });
     }
   };
 
@@ -188,23 +203,23 @@ export default function IshiharaGame() {
     if (setupMode || waitingForOthers) return;
     const timer = setInterval(() => {
       setTimeLeft(t => {
-        if (t <= 1) { nextQuestion(false); return 0; }
+        if (t <= 0) { if (!isProcessing) nextQuestion(false); return 0; }
         return t - 1;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [setupMode, waitingForOthers, currentQ]);
+  }, [setupMode, waitingForOthers, currentQ, timePerQuestion, isProcessing]);
 
   if (setupMode) {
     return (
       <div className="container">
-        <div className="glass-panel" style={{ width: '100%', maxWidth: '500px', textAlign: 'center' }}>
-          <h2 className="title text-gradient" style={{ fontSize: '2.5rem', marginBottom: '2rem' }}>Game Setup</h2>
-          <div style={{ marginBottom: '2rem' }}>
-            <p style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>Seconds per question:</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
-              {[10, 15, 30].map(t => (
-                <button key={t} className={`btn ${timePerQuestion === t ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTimePerQuestion(t)}>{t}s</button>
+        <div className="glass-panel" style={{ width: '100%', maxWidth: '450px', textAlign: 'center', padding: '2rem' }}>
+          <h2 className="title text-gradient" style={{ fontSize: '2rem', marginBottom: '1.5rem' }}>Game Setup</h2>
+          <div style={{ marginBottom: '1.5rem' }}>
+            <p style={{ color: 'var(--text-muted)', marginBottom: '0.8rem' }}>Seconds per question:</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.8rem' }}>
+              {[10, 20, 30, 40, 50, 60].map(t => (
+                <button key={t} className={`btn ${timePerQuestion === t ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '0.5rem' }} onClick={() => setTimePerQuestion(t)}>{t}s</button>
               ))}
             </div>
           </div>
@@ -217,14 +232,13 @@ export default function IshiharaGame() {
   if (waitingForOthers) {
     return (
       <div className="container">
-        <div className="glass-panel" style={{ width: '100%', maxWidth: '500px', textAlign: 'center' }}>
+        <div className="glass-panel" style={{ width: '100%', maxWidth: '450px', textAlign: 'center', padding: '2rem' }}>
           <h2 className="title text-gradient">Finished!</h2>
-          <p className="subtitle">Waiting for other players to finish...</p>
-          <div className="loader" style={{ margin: '2rem auto' }}></div>
+          <div className="loader" style={{ margin: '1.5rem auto', width: '40px', height: '40px' }}></div>
           <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1rem', textAlign: 'left' }}>
-            <h4 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Standings:</h4>
+            <h4 style={{ marginBottom: '0.8rem', fontSize: '0.9rem' }}>Standings:</h4>
             {allPlayers.map(p => (
-              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', color: p.finished ? 'var(--success)' : 'white' }}>
+              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.85rem', color: p.finished ? 'var(--success)' : 'white' }}>
                 <span>{p.name} {p.name === playerName && '(You)'}</span>
                 <span>{p.score} [{p.finished ? 'Done' : 'Playing'}]</span>
               </div>
@@ -236,37 +250,38 @@ export default function IshiharaGame() {
   }
 
   const q = questions[currentQ];
+  if (!q) return null;
 
   return (
-    <div className="container">
-      <div style={{ display: 'grid', gridTemplateColumns: roomCode ? '1fr 300px' : '1fr', gap: '2rem', width: '100%', maxWidth: '1200px' }}>
-        <div className="glass-panel" style={{ width: '100%', textAlign: 'center' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem', alignItems: 'center' }}>
-            <div className="stat-badge"><Hash size={18} /> Question {currentQ + 1} / {totalQuestions}</div>
-            <div className="stat-badge" style={{ color: timeLeft <= 5 ? 'var(--danger)' : 'white' }}><Timer size={18} /> {timeLeft}s</div>
-            <div className="stat-badge"><Star size={18} /> {score}</div>
+    <div className="container" style={{ padding: '0.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: roomCode ? '1fr 280px' : '1fr', gap: '1rem', width: '100%', maxWidth: '1100px' }}>
+        <div className="glass-panel" style={{ textAlign: 'center', padding: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.5rem 1.5rem', borderRadius: '15px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Hash size={16} /> <span style={{ fontWeight: 'bold' }}>{currentQ + 1} / {totalQuestions}</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: timeLeft <= 5 ? 'var(--danger)' : 'white' }}><Timer size={16} /> <span style={{ fontWeight: 'bold' }}>{timeLeft}s</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Star size={16} /> <span style={{ fontWeight: 'bold' }}>{score}</span></div>
           </div>
 
-          <div style={{ background: 'white', padding: '2rem', borderRadius: '24px', marginBottom: '2rem', display: 'inline-block', boxShadow: '0 0 40px rgba(255,255,255,0.1)' }}>
-            <img src={q.image} alt="Test" style={{ width: '300px', height: '300px', objectFit: 'contain' }} />
+          <div style={{ background: 'white', padding: '1rem', borderRadius: '18px', marginBottom: '1rem', display: 'inline-block', boxShadow: '0 0 20px rgba(255,255,255,0.1)' }}>
+            <img src={q.image} alt="Test" style={{ width: '220px', height: '220px', objectFit: 'contain' }} />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', maxWidth: '400px', margin: '0 auto' }}>
             {q.opts.map((opt, i) => (
-              <button key={i} className="btn btn-secondary" style={{ fontSize: '1.5rem', padding: '1.5rem' }} onClick={() => nextQuestion(opt === q.c)}>{opt}</button>
+              <button key={i} className="btn btn-secondary" style={{ fontSize: '1.2rem', padding: '0.8rem' }} onClick={() => nextQuestion(opt === q.c)}>{opt}</button>
             ))}
           </div>
         </div>
 
         {roomCode && (
-          <div className="glass-panel" style={{ width: '100%' }}>
-            <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={20} /> Live Ranks</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+          <div className="glass-panel" style={{ padding: '1rem' }}>
+            <h3 style={{ marginBottom: '1rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Users size={18} /> Live Ranks</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {allPlayers.map((p, idx) => (
-                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.8rem', background: p.name === playerName ? 'rgba(99, 102, 241, 0.2)' : 'rgba(0,0,0,0.2)', borderRadius: '10px', border: p.name === playerName ? '1px solid var(--primary)' : '1px solid transparent' }}>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span style={{ width: '20px', fontWeight: 'bold', color: 'var(--text-muted)' }}>{idx + 1}</span>
-                    <span style={{ fontWeight: p.name === playerName ? '800' : '400' }}>{p.name} {p.finished && <CheckCircle2 size={14} style={{ display: 'inline', color: 'var(--success)' }} />}</span>
+                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem', background: p.name === playerName ? 'rgba(99, 102, 241, 0.2)' : 'rgba(0,0,0,0.3)', borderRadius: '8px', fontSize: '0.85rem' }}>
+                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                    <span style={{ width: '15px', fontWeight: 'bold', color: 'var(--text-muted)' }}>{idx + 1}</span>
+                    <span>{p.name} {p.finished && <CheckCircle2 size={12} style={{ display: 'inline', color: 'var(--success)' }} />}</span>
                   </div>
                   <span style={{ fontWeight: 'bold' }}>{p.score}</span>
                 </div>

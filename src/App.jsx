@@ -40,6 +40,7 @@ function App() {
 
   return (
     <>
+      <div className="glow-effect" />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/lobby" element={<Lobby />} />

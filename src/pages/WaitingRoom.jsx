@@ -25,6 +25,7 @@ export default function WaitingRoom() {
       .select('*')
       .eq('room_code', roomCode);
     setPlayers(playersData || []);
+    return { room: roomData, players: playersData || [] };
   };
 
   useEffect(() => {
@@ -43,8 +44,16 @@ export default function WaitingRoom() {
           });
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, () => {
-        fetchRoomData();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, (payload) => {
+        if (payload.eventType === 'DELETE') {
+          setPlayers(prev => prev.filter(p => p.id !== payload.old.id));
+          if (payload.old.name === playerName) {
+            alert("You have been kicked.");
+            navigate('/lobby');
+          }
+        } else {
+          fetchRoomData();
+        }
       })
       .subscribe();
 
@@ -61,7 +70,6 @@ export default function WaitingRoom() {
     if (humans.length <= 1) {
       await supabase.from('rooms').delete().eq('code', roomCode);
     } else if (isHost) {
-      // Transfer host to someone else
       const nextHost = humans.find(p => p.name !== playerName);
       if (nextHost) {
         await supabase.from('rooms').update({ host_name: nextHost.name }).eq('code', roomCode);
@@ -70,13 +78,16 @@ export default function WaitingRoom() {
     navigate('/lobby');
   };
 
-  const handleAddBot = async (difficulty) => {
-    const botName = `Bot_${difficulty}_${Math.floor(Math.random() * 100)}`;
+  const handleAddBot = async () => {
+    const difficulties = ['Skilled', 'Fast', 'Random', 'Expert'];
+    const diff = difficulties[Math.floor(Math.random() * difficulties.length)];
+    const botName = `Bot_${diff}_${Math.floor(Math.random() * 100)}`;
+    
     await supabase.from('players').insert([{
       room_code: roomCode,
       name: botName,
       is_bot: true,
-      difficulty,
+      difficulty: diff,
       ready: true,
       score: 0,
       current_question: 1
@@ -85,6 +96,10 @@ export default function WaitingRoom() {
   };
 
   const handleKick = async (targetName) => {
+    // Optimistic update: remove from local state immediately
+    setPlayers(prev => prev.filter(p => p.name !== targetName));
+    
+    // Then call DB
     await supabase.from('players').delete().eq('room_code', roomCode).eq('name', targetName);
   };
 
@@ -112,10 +127,10 @@ export default function WaitingRoom() {
   if (!roomCode || !room) return <div className="container"><p>Invalid Room or Loading...</p></div>;
 
   const me = players.find(p => p.name === playerName);
-  const othersReady = players.filter(p => p.name !== room.host_name && !p.is_bot).every(p => p.ready);
 
   return (
     <div className="container">
+      <div className="glow-effect" />
       <div className="glass-panel" style={{ width: '100%', maxWidth: '600px', position: 'relative' }}>
         <button 
           onClick={handleLeaveRoom}
@@ -132,12 +147,31 @@ export default function WaitingRoom() {
         </div>
 
         <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1rem', marginBottom: '2rem' }}>
-          {players.map((p, idx) => (
+          {isHost && (
+            <div style={{ marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid var(--glass-border)' }}>
+              <p style={{ color: 'var(--text-muted)', marginBottom: '0.8rem', fontSize: '0.9rem' }}>Game Duration (Seconds per question):</p>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {[10, 20, 30, 40, 50, 60].map(t => (
+                  <button 
+                    key={t} 
+                    className={`btn ${room.time_limit === t ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', minWidth: '50px' }}
+                    onClick={async () => {
+                      await supabase.from('rooms').update({ time_limit: t }).eq('code', roomCode);
+                    }}
+                  >
+                    {t}s
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {players.sort((a, b) => (a.name === room.host_name ? -1 : b.name === room.host_name ? 1 : 0)).map((p, idx) => (
             <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', borderBottom: idx < players.length - 1 ? '1px solid var(--glass-border)' : 'none' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
                 {p.name === room.host_name && <Crown size={18} color="#fbbf24" />}
                 <span style={{ fontWeight: p.name === playerName ? '800' : '400', color: p.name === playerName ? 'white' : 'var(--text-muted)' }}>
-                  {p.name} {p.name === playerName && '(You)'} {p.is_bot && `[Bot ${p.difficulty}]`}
+                  {p.name} {p.name === playerName && '(You)'} {p.is_bot && '[Bot]'}
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -161,14 +195,6 @@ export default function WaitingRoom() {
                       justifyContent: 'center',
                       transition: 'all 0.2s'
                     }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
-                      e.currentTarget.style.transform = 'scale(1.1)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
-                      e.currentTarget.style.transform = 'scale(1)';
-                    }}
                   >
                     <UserMinus size={18} />
                   </button>
@@ -181,16 +207,7 @@ export default function WaitingRoom() {
         <div style={{ display: 'flex', gap: '1rem', flexDirection: 'column' }}>
           {isHost && players.length < 8 && (
             <div style={{ marginBottom: '1rem' }}>
-              {!showBotMenu ? (
-                <button className="btn btn-secondary" style={{ width: '100%' }} onClick={() => setShowBotMenu(true)}>+ Add Bot</button>
-              ) : (
-                <div style={{ display: 'flex', gap: '0.5rem', background: 'rgba(0,0,0,0.3)', padding: '0.5rem', borderRadius: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                  <button className="btn btn-secondary" style={{ padding: '0.5rem 1rem' }} onClick={() => handleAddBot('Easy')}>Easy</button>
-                  <button className="btn btn-secondary" style={{ padding: '0.5rem 1rem' }} onClick={() => handleAddBot('Medium')}>Medium</button>
-                  <button className="btn btn-secondary" style={{ padding: '0.5rem 1rem', color: '#ef4444' }} onClick={() => handleAddBot('Hard')}>Hard</button>
-                  <button className="btn btn-secondary" style={{ width: '100%' }} onClick={() => setShowBotMenu(false)}>Cancel</button>
-                </div>
-              )}
+                <button className="btn btn-secondary" style={{ width: '100%' }} onClick={handleAddBot}>+ Add Bot</button>
             </div>
           )}
 
@@ -204,10 +221,10 @@ export default function WaitingRoom() {
               <button 
                 className="btn btn-primary" 
                 style={{ flex: 1 }} 
+                disabled={players.length < 2 || !players.every(p => p.ready)}
                 onClick={handleStartGame}
-                disabled={!othersReady}
               >
-                {!othersReady ? 'Waiting for others...' : 'Start Game'}
+                {players.length < 2 ? 'Need at least 2 Players' : 'Start Game'}
               </button>
             )}
           </div>
