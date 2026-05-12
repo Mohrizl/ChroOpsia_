@@ -135,61 +135,110 @@ export default function WaitingRoom() {
   const me = players.find(p => p.name === playerName);
 
   return (
-    <div className="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', paddingTop: '2rem', paddingBottom: '2rem' }}>
-      <div className="glass-panel" style={{ width: '100%', maxWidth: '600px' }}>
-        <button onClick={handleLeaveRoom} style={{ position: 'absolute', top: '1.5rem', left: '1.5rem', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
-          <ArrowLeft size={24} />
+    <div className="container" style={{ padding: '1rem' }}>
+      <style>{`
+        .waiting-panel {
+          width: 100%;
+          maxWidth: 600px;
+          position: relative;
+          padding: 3rem 2rem;
+        }
+        @media (max-width: 768px) {
+          .waiting-panel {
+            padding: 4rem 1.2rem 2rem;
+          }
+          .waiting-title {
+            font-size: 2rem !important;
+          }
+          .back-btn-wr {
+            top: 1rem !important;
+            left: 1rem !important;
+          }
+        }
+      `}</style>
+
+      <div className="glass-panel waiting-panel">
+        <button 
+          onClick={handleLeaveRoom} 
+          className="btn-secondary back-btn-wr"
+          style={{ position: 'absolute', top: '2rem', left: '2rem', width: 'auto', padding: '0.6rem', borderRadius: '12px', zIndex: 10 }}
+          title="Leave Room"
+        >
+          <ArrowLeft size={20} />
         </button>
+
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <h2 className="title text-gradient" style={{ fontSize: '2.5rem', marginBottom: '0.5rem', marginTop: '1rem' }}>Waiting Room</h2>
+          <h2 className="title text-gradient waiting-title" style={{ fontSize: '2.8rem', marginBottom: '0.5rem', marginTop: '0.5rem' }}>Waiting Room</h2>
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)' }}>
             <Users size={20} /> <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>Code: {roomCode}</span>
           </div>
-          <p style={{ marginTop: '0.5rem', color: 'var(--primary)' }}>{players.length} / 8 Players</p>
+          <p style={{ marginTop: '0.5rem', color: 'var(--primary)', fontWeight: '600' }}>{players.length} / 8 Players</p>
         </div>
 
-        <div style={{ background: 'var(--input-bg)', borderRadius: '16px', padding: '1.5rem', marginBottom: '2rem', border: '1px solid var(--glass-border)' }}>
+        <div style={{ background: 'var(--input-bg)', borderRadius: '24px', padding: '1.5rem', marginBottom: '2rem', border: '1px solid var(--glass-border)' }}>
           {isHost && (
-            <div style={{ marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid var(--glass-border)' }}>
-              <p style={{ color: 'var(--text-muted)', marginBottom: '0.8rem', fontSize: '0.9rem' }}>Game Duration:</p>
+            <div style={{ marginBottom: '1.5rem', paddingBottom: '1.2rem', borderBottom: '1px solid var(--glass-border)' }}>
+              <p style={{ color: 'var(--text-muted)', marginBottom: '0.8rem', fontSize: '0.9rem', fontWeight: '500' }}>Game Duration:</p>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 {[5, 10, 15, 20, 25, 30].map(t => (
-                  <button key={t} className={`btn ${room.time_limit === t ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={async () => { await supabase.from('rooms').update({ time_limit: t }).eq('code', roomCode); }}>{t}s</button>
+                  <button key={t} className={`btn ${room.time_limit === t ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', width: 'auto' }} onClick={async () => { await supabase.from('rooms').update({ time_limit: t }).eq('code', roomCode); }}>{t}s</button>
                 ))}
               </div>
             </div>
           )}
           {isHost && (initialGameType === 'ishihara' || room?.game_type === 'ishihara') && (
-            <div style={{ marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid var(--glass-border)' }}>
-              <p style={{ color: 'var(--text-muted)', marginBottom: '0.8rem', fontSize: '0.9rem' }}>Number of Questions:</p>
+            <div style={{ marginBottom: '1.5rem', paddingBottom: '1.2rem', borderBottom: '1px solid var(--glass-border)' }}>
+              <p style={{ color: 'var(--text-muted)', marginBottom: '0.8rem', fontSize: '0.9rem', fontWeight: '500' }}>Number of Questions:</p>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 {[14, 28].map(num => (
-                  <button key={num} className={`btn ${room.num_questions === num ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={async () => { await supabase.from('rooms').update({ num_questions: num }).eq('code', roomCode); }}>{num}</button>
+                  <button key={num} className={`btn ${room.num_questions === num ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', width: 'auto' }} onClick={async () => { await supabase.from('rooms').update({ num_questions: num }).eq('code', roomCode); }}>{num}</button>
                 ))}
               </div>
             </div>
           )}
-          {players.sort((a, b) => (a.name === room.host_name ? -1 : b.name === room.host_name ? 1 : 0)).map((p, idx) => (
-            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', borderBottom: idx < players.length - 1 ? '1px solid var(--glass-border)' : 'none' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-                {p.name === room.host_name && <Crown size={18} color="#fbbf24" />}
-                <span style={{ fontWeight: p.name === playerName ? '800' : '400', color: 'var(--text-main)' }}>{p.name} {p.name === playerName && '(You)'} {p.is_bot && '[Bot]'}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+            {players.sort((a, b) => (a.name === room.host_name ? -1 : b.name === room.host_name ? 1 : 0)).map((p, idx) => (
+              <div key={p.id} style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                padding: '0.8rem 1rem', 
+                background: p.name === playerName ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
+                borderRadius: '12px',
+                border: p.name === playerName ? '1px solid var(--primary)' : '1px solid transparent'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', minWidth: 0 }}>
+                  {p.name === room.host_name && <Crown size={18} color="#fbbf24" style={{ flexShrink: 0 }} />}
+                  <span style={{ 
+                    fontWeight: p.name === playerName ? '800' : '500', 
+                    color: 'var(--text-main)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    fontSize: '0.95rem'
+                  }}>
+                    {p.name} {p.name === playerName && '(You)'} {p.is_bot && '[Bot]'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexShrink: 0 }}>
+                  {(p.name === room.host_name) || p.is_bot || p.ready ? 
+                    <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', fontWeight: '700' }}><CheckCircle size={16}/> Ready</span> : 
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: '500' }}>Waiting...</span>
+                  }
+                  {isHost && p.name !== playerName && (
+                    <button onClick={() => handleKick(p.name)} className="kick-btn" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444', cursor: 'pointer', padding: '0.4rem', borderRadius: '10px' }} title="Kick Player"><UserMinus size={18} /></button>
+                  )}
+                </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                {(p.name === room.host_name) || p.is_bot || p.ready ? <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem' }}><CheckCircle size={16}/> Ready</span> : <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Not Ready</span>}
-                {isHost && p.name !== playerName && (
-                  <button onClick={() => handleKick(p.name)} className="kick-btn" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444', cursor: 'pointer', padding: '0.5rem', borderRadius: '8px' }}><UserMinus size={18} /></button>
-                )}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
         <div style={{ display: 'flex', gap: '1rem', flexDirection: 'column' }}>
-          {isHost && players.length < 8 && <button className="btn btn-secondary" style={{ width: '100%', marginBottom: '1rem' }} onClick={handleAddBot}>+ Add Bot</button>}
-          <div style={{ display: 'flex', gap: '1rem' }}>
-            {!isHost && <button className={`btn ${me?.ready ? 'btn-secondary' : 'btn-primary'}`} style={{ flex: 1 }} onClick={toggleReady}>{me?.ready ? 'Cancel Ready' : 'I am Ready'}</button>}
-            {isHost && <button className="btn btn-primary" style={{ flex: 1 }} disabled={players.length < 2 || !players.every(p => p.ready)} onClick={handleStartGame}>{players.length < 2 ? 'Wait for players' : 'Start Game'}</button>}
+          {isHost && players.length < 8 && <button className="btn btn-secondary" style={{ width: '100%' }} onClick={handleAddBot}>+ Add Bot</button>}
+          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+            {!isHost && <button className={`btn ${me?.ready ? 'btn-secondary' : 'btn-primary'}`} style={{ flex: 1, minWidth: '140px' }} onClick={toggleReady}>{me?.ready ? 'Cancel Ready' : 'I am Ready'}</button>}
+            {isHost && <button className="btn btn-primary" style={{ flex: 1, minWidth: '140px' }} disabled={players.length < 2 || !players.every(p => p.ready)} onClick={handleStartGame}>{players.length < 2 ? 'Need 2+ Players' : 'Start Game'}</button>}
           </div>
         </div>
       </div>

@@ -21,21 +21,53 @@ export default function GameModeSelect() {
   };
 
   return (
-    <div className="container">
-      <div className="glass-panel" style={{ maxWidth: '900px', width: '100%', textAlign: 'center', position: 'relative' }}>
+    <div className="container" style={{ padding: '1rem' }}>
+      <style>{`
+        .mode-panel {
+          max-width: 900px;
+          width: 100%;
+          text-align: center;
+          position: relative;
+          padding: 3rem 2rem;
+        }
+        .mode-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+          gap: 2rem;
+          margin-top: 2rem;
+        }
+        @media (max-width: 768px) {
+          .mode-panel {
+            padding: 4rem 1.5rem 2rem;
+          }
+          .mode-title {
+            font-size: 2.2rem !important;
+            line-height: 1.1;
+          }
+          .mode-grid {
+            gap: 1.2rem;
+          }
+          .back-btn {
+            top: 1rem !important;
+            left: 1rem !important;
+          }
+        }
+      `}</style>
+
+      <div className="glass-panel mode-panel">
         <button 
           onClick={() => navigate(-1)} 
-          className="btn-secondary"
-          style={{ position: 'absolute', top: '2rem', left: '2rem', width: 'auto', padding: '0.5rem', borderRadius: '12px' }}
+          className="btn-secondary back-btn"
+          style={{ position: 'absolute', top: '2rem', left: '2rem', width: 'auto', padding: '0.6rem', borderRadius: '12px', zIndex: 10 }}
           title="Go Back"
         >
           <ArrowLeft size={20} />
         </button>
         
-        <h2 className="title text-gradient" style={{ fontSize: '3rem', marginTop: '1rem' }}>Choose Your Challenge</h2>
-        <p className="subtitle">Select a mode to test your visual perception</p>
+        <h2 className="title text-gradient mode-title" style={{ fontSize: '3.5rem', marginBottom: '0.5rem' }}>Choose Your Challenge</h2>
+        <p className="subtitle" style={{ marginBottom: '2rem' }}>Select a mode to test your visual perception</p>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem', marginTop: '2rem' }}>
+        <div className="mode-grid">
           
           <div 
             className="glass-panel" 
@@ -43,7 +75,8 @@ export default function GameModeSelect() {
               background: 'var(--input-bg)', 
               border: '2px solid transparent',
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              cursor: 'pointer'
+              cursor: 'pointer',
+              padding: '2rem'
             }}
             onClick={() => handleSelect('color-race')}
             onMouseEnter={(e) => {
@@ -61,7 +94,7 @@ export default function GameModeSelect() {
               <Palette size={40} color="var(--primary)" />
             </div>
             <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Color Match Racing</h3>
-            <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>Find the exact matching shade as fast as possible before time runs out! Test your speed and accuracy.</p>
+            <p style={{ color: 'var(--text-muted)', lineHeight: '1.6', fontSize: '0.95rem' }}>Find the exact matching shade as fast as possible before time runs out! Test your speed and accuracy.</p>
           </div>
 
           <div 
@@ -70,7 +103,8 @@ export default function GameModeSelect() {
               background: 'var(--input-bg)', 
               border: '2px solid transparent',
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              cursor: 'pointer'
+              cursor: 'pointer',
+              padding: '2rem'
             }}
             onClick={() => handleSelect('ishihara')}
             onMouseEnter={(e) => {
@@ -88,7 +122,7 @@ export default function GameModeSelect() {
               <Eye size={40} color="var(--secondary)" />
             </div>
             <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Ishihara Challenge</h3>
-            <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>Identify hidden numbers within complex patterns. A classic test of color deficiency and perception.</p>
+            <p style={{ color: 'var(--text-muted)', lineHeight: '1.6', fontSize: '0.95rem' }}>Identify hidden numbers within complex patterns. A classic test of color deficiency and perception.</p>
           </div>
 
         </div>
