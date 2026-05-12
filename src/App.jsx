@@ -33,7 +33,7 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const musicUrl = "/public/backphonk.mp3";
+  const musicUrl = "/backphonk.mp3";
 
   useEffect(() => {
     audioRef.current = new Audio(musicUrl);
