@@ -321,3 +321,4 @@ h1, h2, h3 {
 .leaderboard-item:last-child {
   border-bottom: none;
 }
+@keyframes float-up-fade { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-40px); opacity: 0; } } .score-popup { position: absolute; color: var(--success); font-weight: 900; font-size: 1.5rem; pointer-events: none; animation: float-up-fade 1s forwards ease-out; text-shadow: 0 0 10px rgba(16, 185, 129, 0.5); z-index: 100; }

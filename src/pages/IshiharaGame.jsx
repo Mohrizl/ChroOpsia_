@@ -40,6 +40,7 @@ export default function IshiharaGame() {
   const [correctCount, setCorrectCount] = useState(0);
   const [allPlayers, setAllPlayers] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [scorePopups, setScorePopups] = useState([]);
 
   const scoreRef = useRef(0);
   const correctRef = useRef(0);
@@ -58,16 +59,11 @@ export default function IshiharaGame() {
 
     const { data: rData } = await supabase.from('rooms').select('*').eq('code', roomCode).single();
     if (rData?.status === 'finished') {
-      navigate('/score', { 
-        state: { 
-          ...location.state,
-          score: scoreRef.current, 
-          mode: 'Ishihara Test', 
-          wrongCount: wrongRef.current,
-          correctCount: correctRef.current,
-          allPlayers: sorted, 
-        } 
-      });
+      setTimeout(() => {
+          navigate('/score', { 
+            state: { ...location.state, score: scoreRef.current, mode: 'Ishihara Test', wrongCount: wrongRef.current, correctCount: correctRef.current, allPlayers: sorted } 
+          });
+      }, 500);
     }
     return { players: sorted, room: rData };
   }, [roomCode, navigate, location.state]);
@@ -90,9 +86,7 @@ export default function IshiharaGame() {
     if (!roomCode) return;
     fetchGameState();
     const channel = supabase.channel(`game-${roomCode}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, () => {
-        fetchGameState();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, () => { fetchGameState(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` }, (payload) => {
         if (payload.new.status === 'finished') fetchGameState();
       })
@@ -104,31 +98,26 @@ export default function IshiharaGame() {
     if (!isHost || !roomCode || setupMode) return;
     const botInterval = setInterval(async () => {
       const { players, room } = await fetchGameState();
-      if (room.status === 'finished') {
-        clearInterval(botInterval);
+      if (!room || room.status !== 'playing') {
+        if (room?.status === 'finished') clearInterval(botInterval);
         return;
       }
       const humans = players.filter(p => !p.is_bot);
       const bots = players.filter(p => p.is_bot && !p.finished);
-
       if (bots.length > 0) {
         const botUpdates = bots.map(async (bot) => {
           if (Math.random() < 0.7) {
             const newQ = bot.current_question + (Math.random() > 0.6 ? 2 : 1);
             const botScoreAdd = Math.floor(400 * (Math.random() * 0.5 + 0.5));
             const newScore = bot.score + botScoreAdd;
-            return supabase.from('players').update({
-              current_question: newQ,
-              score: newScore,
-              finished: newQ > totalQuestions
-            }).eq('id', bot.id);
+            return supabase.from('players').update({ current_question: newQ, score: newScore, finished: newQ > totalQuestions }).eq('id', bot.id);
           }
           return null;
         });
         await Promise.all(botUpdates.filter(u => u !== null));
       }
-
-      if (humans.length > 0 && humans.every(h => h.finished)) {
+      const activeHumans = humans.length;
+      if (activeHumans > 0 && humans.every(h => h.finished)) {
         await supabase.from('rooms').update({ status: 'finished' }).eq('code', roomCode);
         clearInterval(botInterval);
       }
@@ -138,13 +127,7 @@ export default function IshiharaGame() {
 
   const startGame = () => {
     const qList = [...ISHIHARA_IMAGES].sort(() => Math.random() - 0.5).slice(0, totalQuestions).map(buildQuestion);
-    setQuestions(qList);
-    setSetupMode(false);
-    setCurrentQ(0);
-    setScore(0);
-    setWrongCount(0);
-    setCorrectCount(0);
-    setTimeLeft(timePerQuestion);
+    setQuestions(qList); setSetupMode(false); setCurrentQ(0); setScore(0); setWrongCount(0); setCorrectCount(0); setTimeLeft(timePerQuestion);
   };
 
   const nextQuestion = (isCorrect) => {
@@ -153,32 +136,40 @@ export default function IshiharaGame() {
     let ns = score;
     let ncc = correctCount;
     let nwc = wrongCount;
+
     if (isCorrect) {
       const pts = Math.max(50, Math.floor(400 * (timeLeft / timePerQuestion)));
       ns += pts;
       ncc += 1;
       setScore(ns);
       setCorrectCount(ncc);
+      setScorePopups(prev => [...prev, { id: Date.now(), val: pts }]);
+      setTimeout(() => setScorePopups(prev => prev.slice(1)), 1000);
     } else {
       nwc += 1;
       setWrongCount(nwc);
     }
-    if (roomCode) {
-      supabase.from('players').update({
-        score: ns,
-        current_question: currentQ + 2,
-        correct_count: ncc,
-        wrong_count: nwc,
-        finished: currentQ >= totalQuestions - 1
-      }).eq('room_code', roomCode).eq('name', playerName).then();
-    }
-    if (currentQ < totalQuestions - 1) {
-      setCurrentQ(c => c + 1);
-      setTimeLeft(timePerQuestion);
-      setTimeout(() => setIsProcessing(false), 200);
-    } else {
-      handleFinishGame(ns, nwc, ncc);
-    }
+
+    // Delay 1.5s before proceeding to next question
+    setTimeout(() => {
+        if (roomCode) {
+          supabase.from('players').update({
+            score: ns,
+            current_question: currentQ + 2,
+            correct_count: ncc,
+            wrong_count: nwc,
+            finished: currentQ >= totalQuestions - 1
+          }).eq('room_code', roomCode).eq('name', playerName).then();
+        }
+
+        if (currentQ < totalQuestions - 1) {
+          setCurrentQ(c => c + 1);
+          setTimeLeft(timePerQuestion);
+          setIsProcessing(false);
+        } else {
+          handleFinishGame(ns, nwc, ncc);
+        }
+    }, 1500);
   };
 
   const handleFinishGame = async (fs, fwc, fcc) => {
@@ -191,7 +182,7 @@ export default function IshiharaGame() {
   };
 
   useEffect(() => {
-    if (setupMode || waitingForOthers) return;
+    if (setupMode || waitingForOthers || isProcessing) return;
     const timer = setInterval(() => {
       setTimeLeft(t => {
         if (t <= 0) { if (!isProcessing) nextQuestion(false); return 0; }
@@ -246,11 +237,16 @@ export default function IshiharaGame() {
   return (
     <div className="container" style={{ padding: '0.3rem' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', width: '100%', maxWidth: '850px', margin: '0 auto' }}>
-        <div className="glass-panel" style={{ textAlign: 'center', padding: '0.8rem', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.8rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.4rem 1.2rem', borderRadius: '12px' }}>
+        <div className="glass-panel" style={{ textAlign: 'center', padding: '0.8rem', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.8rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.4rem 1.2rem', borderRadius: '12px', position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem' }}><Hash size={14} /> <span>{currentQ + 1}/{totalQuestions}</span></div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: timeLeft <= 5 ? 'var(--danger)' : 'white', fontSize: '0.9rem' }}><Timer size={14} /> <span>{timeLeft}s</span></div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem' }}><Star size={14} /> <span>{score}</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem', position: 'relative' }}>
+                <Star size={14} /> <span>{score}</span>
+                {scorePopups.map(p => (
+                    <div key={p.id} className="score-popup" style={{ top: '-20px', right: '0' }}>+{p.val}</div>
+                ))}
+            </div>
           </div>
           <div style={{ background: 'white', padding: '0.8rem', borderRadius: '20px', marginBottom: '0.8rem', display: 'inline-block', alignSelf: 'center' }}>
             <img src={q.image} alt="Test" style={{ width: '230px', height: '230px', objectFit: 'contain' }} />
@@ -258,7 +254,20 @@ export default function IshiharaGame() {
           <p style={{ fontSize: '1rem', marginBottom: '0.8rem', color: 'white', fontWeight: 'bold' }}>What number do you see?</p>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem', width: '100%', maxWidth: '500px', margin: '0 auto' }}>
             {q.opts.map((opt, i) => (
-              <button key={i} className="btn btn-secondary" style={{ fontSize: '1.1rem', padding: '0.6rem', fontWeight: '800' }} onClick={() => nextQuestion(opt === q.c)}>{opt}</button>
+              <button 
+                key={i} 
+                className="btn btn-secondary" 
+                style={{ 
+                    fontSize: '1.1rem', padding: '0.6rem', fontWeight: '800',
+                    opacity: isProcessing ? (opt === q.c ? 1 : 0.5) : 1,
+                    background: isProcessing && opt === q.c ? 'var(--success)' : 'var(--glass-bg)',
+                    borderColor: isProcessing && opt === q.c ? 'var(--success)' : 'var(--glass-border)'
+                }} 
+                disabled={isProcessing}
+                onClick={() => nextQuestion(opt === q.c)}
+              >
+                {opt}
+              </button>
             ))}
           </div>
         </div>

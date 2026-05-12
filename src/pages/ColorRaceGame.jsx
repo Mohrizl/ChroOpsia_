@@ -29,6 +29,7 @@ export default function ColorRaceGame() {
   const [allPlayers, setAllPlayers] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [scorePopups, setScorePopups] = useState([]);
 
   const scoreRef = useRef(0);
   const correctRef = useRef(0);
@@ -64,7 +65,9 @@ export default function ColorRaceGame() {
     setAllPlayers(sorted);
     const { data: rData } = await supabase.from('rooms').select('*').eq('code', roomCode).single();
     if (rData?.status === 'finished') {
-      navigate('/score', { state: { ...location.state, score: scoreRef.current, mode: 'Color Race', correctCount: correctRef.current, allPlayers: sorted } });
+      setTimeout(() => {
+          navigate('/score', { state: { ...location.state, score: scoreRef.current, mode: 'Color Race', correctCount: correctRef.current, allPlayers: sorted } });
+      }, 500);
     }
     return { players: sorted, room: rData };
   }, [roomCode, navigate, location.state]);
@@ -96,7 +99,10 @@ export default function ColorRaceGame() {
     if (!isHost || !roomCode || setupMode) return;
     const botInterval = setInterval(async () => {
       const { players, room } = await fetchGameState();
-      if (room.status === 'finished') { clearInterval(botInterval); return; }
+      if (!room || room.status !== 'playing') {
+        if (room?.status === 'finished') clearInterval(botInterval);
+        return;
+      }
       const humans = players.filter(p => !p.is_bot);
       const bots = players.filter(p => p.is_bot && !p.finished);
       if (bots.length > 0) {
@@ -111,7 +117,8 @@ export default function ColorRaceGame() {
         });
         await Promise.all(botUpdates.filter(u => u !== null));
       }
-      if (humans.length > 0 && humans.every(h => h.finished)) {
+      const activeHumans = humans.length;
+      if (activeHumans > 0 && humans.every(h => h.finished)) {
         await supabase.from('rooms').update({ status: 'finished' }).eq('code', roomCode);
         clearInterval(botInterval);
       }
@@ -144,16 +151,22 @@ export default function ColorRaceGame() {
     if (isProcessing || showAnswer) return;
     if (color === targetColor) {
       setIsProcessing(true);
+      setShowAnswer(true);
       const pts = Math.max(50, Math.floor(400 * (timeLeft / timePerQuestion)));
       const ns = score + pts; const ncc = correctCount + 1;
       setScore(ns); setCorrectCount(ncc);
-      if (roomCode) { supabase.from('players').update({ score: ns, current_question: currentQuestion + 1, correct_count: ncc, finished: currentQuestion >= totalQuestions }).eq('room_code', roomCode).eq('name', playerName).then(); }
-      nextQuestion();
+      setScorePopups(prev => [...prev, { id: Date.now(), val: pts }]);
+      setTimeout(() => setScorePopups(prev => prev.slice(1)), 1000);
+
+      setTimeout(() => {
+        if (roomCode) { supabase.from('players').update({ score: ns, current_question: currentQuestion + 1, correct_count: ncc, finished: currentQuestion >= totalQuestions }).eq('room_code', roomCode).eq('name', playerName).then(); }
+        nextQuestion();
+      }, 1500);
     } else { setTimeLeft(t => Math.max(0, t - 3)); }
   };
 
   useEffect(() => {
-    if (setupMode || waitingForOthers || showAnswer) return;
+    if (setupMode || waitingForOthers || showAnswer || isProcessing) return;
     const timer = setInterval(() => {
       setTimeLeft(t => {
         if (t <= 0) { 
@@ -208,11 +221,16 @@ export default function ColorRaceGame() {
   return (
     <div className="container" style={{ padding: '0.3rem' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', width: '100%', maxWidth: '850px', margin: '0 auto' }}>
-        <div className="glass-panel" style={{ textAlign: 'center', padding: '0.8rem', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.8rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.4rem 1.2rem', borderRadius: '12px' }}>
+        <div className="glass-panel" style={{ textAlign: 'center', padding: '0.8rem', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.8rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.4rem 1.2rem', borderRadius: '12px', position: 'relative' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem' }}><Hash size={14} /> <span>{currentQuestion}/{totalQuestions}</span></div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: timeLeft <= 5 ? 'var(--danger)' : 'white', fontSize: '0.9rem' }}><Timer size={14} /> <span>{timeLeft}s</span></div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem' }}><Star size={14} /> <span>{score}</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem', position: 'relative' }}>
+                <Star size={14} /> <span>{score}</span>
+                {scorePopups.map(p => (
+                    <div key={p.id} className="score-popup" style={{ top: '-20px', right: '0' }}>+{p.val}</div>
+                ))}
+            </div>
           </div>
           <div style={{ marginBottom: '0.8rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
              <p style={{ fontSize: '0.9rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'white' }}><Target size={14} color="var(--primary)" /> Find the color:</p>
@@ -220,7 +238,19 @@ export default function ColorRaceGame() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(${getLevelConfig(currentQuestion).gridSize}, 1fr)`, gap: '6px', margin: '0 auto', width: '100%', maxWidth: '320px', aspectRatio: '1/1' }}>
             {options.map((color, i) => (
-              <button key={i} className="color-box" style={{ background: color, borderRadius: '10px', border: (showAnswer && color === targetColor) ? '3px solid var(--success)' : 'none', cursor: (isProcessing || showAnswer) ? 'default' : 'pointer' }} onClick={() => handleGuess(color)} />
+              <button 
+                key={i} 
+                className="color-box" 
+                style={{ 
+                    background: color, borderRadius: '10px', 
+                    border: (showAnswer && color === targetColor) ? '3px solid var(--success)' : 'none', 
+                    cursor: (isProcessing || showAnswer) ? 'default' : 'pointer',
+                    boxShadow: (showAnswer && color === targetColor) ? '0 0 10px var(--success)' : 'none',
+                    opacity: isProcessing && color !== targetColor ? 0.5 : 1
+                }} 
+                disabled={isProcessing}
+                onClick={() => handleGuess(color)} 
+              />
             ))}
           </div>
         </div>
