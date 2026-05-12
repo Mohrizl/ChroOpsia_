@@ -80,11 +80,11 @@ export default function IshiharaGame() {
           const qList = [...ISHIHARA_IMAGES].sort(() => Math.random() - 0.5).slice(0, totalQuestions).map(buildQuestion);
           setQuestions(qList);
           setTimeLeft(data.time_limit || 20);
-          setSetupMode(false);
+          if (!isHost) setSetupMode(false);
         }
       });
     }
-  }, [roomCode]);
+  }, [roomCode, isHost]);
 
   useEffect(() => {
     if (!roomCode) return;
@@ -150,11 +150,9 @@ export default function IshiharaGame() {
   const nextQuestion = (isCorrect) => {
     if (isProcessing) return;
     setIsProcessing(true);
-
     let ns = score;
     let ncc = correctCount;
     let nwc = wrongCount;
-
     if (isCorrect) {
       const pts = Math.max(50, Math.floor(400 * (timeLeft / timePerQuestion)));
       ns += pts;
@@ -165,7 +163,6 @@ export default function IshiharaGame() {
       nwc += 1;
       setWrongCount(nwc);
     }
-
     if (roomCode) {
       supabase.from('players').update({
         score: ns,
@@ -175,7 +172,6 @@ export default function IshiharaGame() {
         finished: currentQ >= totalQuestions - 1
       }).eq('room_code', roomCode).eq('name', playerName).then();
     }
-
     if (currentQ < totalQuestions - 1) {
       setCurrentQ(c => c + 1);
       setTimeLeft(timePerQuestion);
@@ -188,12 +184,7 @@ export default function IshiharaGame() {
   const handleFinishGame = async (fs, fwc, fcc) => {
     if (roomCode) {
       setWaitingForOthers(true);
-      await supabase.from('players').update({
-        finished: true,
-        score: fs,
-        correct_count: fcc,
-        wrong_count: fwc
-      }).eq('room_code', roomCode).eq('name', playerName);
+      await supabase.from('players').update({ finished: true, score: fs, correct_count: fcc, wrong_count: fwc }).eq('room_code', roomCode).eq('name', playerName);
     } else {
       navigate('/score', { state: { score: fs, mode: 'Ishihara Test', wrongCount: fwc, correctCount: fcc, ...location.state } });
     }
@@ -213,13 +204,13 @@ export default function IshiharaGame() {
   if (setupMode) {
     return (
       <div className="container">
-        <div className="glass-panel" style={{ width: '100%', maxWidth: '450px', textAlign: 'center', padding: '2rem' }}>
-          <h2 className="title text-gradient" style={{ fontSize: '2rem', marginBottom: '1.5rem' }}>Game Setup</h2>
-          <div style={{ marginBottom: '1.5rem' }}>
-            <p style={{ color: 'var(--text-muted)', marginBottom: '0.8rem' }}>Seconds per question:</p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.8rem' }}>
+        <div className="glass-panel" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '1.5rem' }}>
+          <h2 className="title text-gradient" style={{ fontSize: '1.8rem', marginBottom: '1.2rem' }}>Game Setup</h2>
+          <div style={{ marginBottom: '1.2rem' }}>
+            <p style={{ color: 'var(--text-muted)', marginBottom: '0.6rem', fontSize: '0.9rem' }}>Seconds per question:</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.6rem' }}>
               {[10, 20, 30, 40, 50, 60].map(t => (
-                <button key={t} className={`btn ${timePerQuestion === t ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '0.5rem' }} onClick={() => setTimePerQuestion(t)}>{t}s</button>
+                <button key={t} className={`btn ${timePerQuestion === t ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '0.4rem', fontSize: '0.85rem' }} onClick={() => setTimePerQuestion(t)}>{t}s</button>
               ))}
             </div>
           </div>
@@ -232,15 +223,15 @@ export default function IshiharaGame() {
   if (waitingForOthers) {
     return (
       <div className="container">
-        <div className="glass-panel" style={{ width: '100%', maxWidth: '450px', textAlign: 'center', padding: '2rem' }}>
-          <h2 className="title text-gradient">Finished!</h2>
-          <div className="loader" style={{ margin: '1.5rem auto', width: '40px', height: '40px' }}></div>
+        <div className="glass-panel" style={{ width: '100%', maxWidth: '450px', textAlign: 'center', padding: '1.5rem' }}>
+          <h2 className="title text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>Finished!</h2>
+          <p style={{ color: 'var(--primary)', fontWeight: 'bold', fontSize: '1rem', marginBottom: '1rem' }}>Waiting for other players...</p>
+          <div className="loader" style={{ margin: '0 auto 1.5rem auto', width: '30px', height: '30px' }}></div>
           <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1rem', textAlign: 'left' }}>
-            <h4 style={{ marginBottom: '0.8rem', fontSize: '0.9rem' }}>Standings:</h4>
             {allPlayers.map(p => (
               <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.85rem', color: p.finished ? 'var(--success)' : 'white' }}>
-                <span>{p.name} {p.name === playerName && '(You)'}</span>
-                <span>{p.score} [{p.finished ? 'Done' : 'Playing'}]</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '0.5rem' }}>{p.name} {p.name === playerName && '(You)'}</span>
+                <span style={{ fontWeight: 'bold' }}>{p.score}</span>
               </div>
             ))}
           </div>
@@ -253,74 +244,43 @@ export default function IshiharaGame() {
   if (!q) return null;
 
   return (
-    <div className="container" style={{ padding: '0.5rem' }}>
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: roomCode ? '1fr 300px' : '1fr', 
-        gap: '1rem', 
-        width: '100%', 
-        maxWidth: '1200px',
-        alignItems: 'stretch'
-      }}>
-        <div className="glass-panel" style={{ textAlign: 'center', padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.6rem 1.8rem', borderRadius: '15px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Hash size={18} /> <span style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{currentQ + 1} / {totalQuestions}</span></div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: timeLeft <= 5 ? 'var(--danger)' : 'white' }}><Timer size={18} /> <span style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{timeLeft}s</span></div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Star size={18} /> <span style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{score}</span></div>
+    <div className="container" style={{ padding: '0.3rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', width: '100%', maxWidth: '850px', margin: '0 auto' }}>
+        <div className="glass-panel" style={{ textAlign: 'center', padding: '0.8rem', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.8rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.4rem 1.2rem', borderRadius: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem' }}><Hash size={14} /> <span>{currentQ + 1}/{totalQuestions}</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: timeLeft <= 5 ? 'var(--danger)' : 'white', fontSize: '0.9rem' }}><Timer size={14} /> <span>{timeLeft}s</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem' }}><Star size={14} /> <span>{score}</span></div>
           </div>
-
-          <div style={{ background: 'white', padding: '1.5rem', borderRadius: '28px', marginBottom: '1.5rem', display: 'inline-block', alignSelf: 'center', boxShadow: '0 0 40px rgba(255,255,255,0.1)' }}>
-            <img src={q.image} alt="Test" style={{ width: '320px', height: '320px', objectFit: 'contain' }} />
+          <div style={{ background: 'white', padding: '0.8rem', borderRadius: '20px', marginBottom: '0.8rem', display: 'inline-block', alignSelf: 'center' }}>
+            <img src={q.image} alt="Test" style={{ width: '230px', height: '230px', objectFit: 'contain' }} />
           </div>
-
-          <p style={{ fontSize: '1.4rem', marginBottom: '1.5rem', color: 'white', fontWeight: 'bold', letterSpacing: '0.05em' }}>
-            What number do you see?
-          </p>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.2rem', width: '100%', maxWidth: '600px', margin: '0 auto' }}>
+          <p style={{ fontSize: '1rem', marginBottom: '0.8rem', color: 'white', fontWeight: 'bold' }}>What number do you see?</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem', width: '100%', maxWidth: '500px', margin: '0 auto' }}>
             {q.opts.map((opt, i) => (
-              <button 
-                key={i} 
-                className="btn btn-secondary" 
-                style={{ 
-                  fontSize: '1.5rem', 
-                  padding: '1.2rem', 
-                  fontWeight: '900', 
-                  borderRadius: '16px',
-                  boxShadow: '0 4px 15px rgba(0,0,0,0.2)'
-                }} 
-                onClick={() => nextQuestion(opt === q.c)}
-              >
-                {opt}
-              </button>
+              <button key={i} className="btn btn-secondary" style={{ fontSize: '1.1rem', padding: '0.6rem', fontWeight: '800' }} onClick={() => nextQuestion(opt === q.c)}>{opt}</button>
             ))}
           </div>
         </div>
 
         {roomCode && (
-          <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
-            <h3 style={{ marginBottom: '1.5rem', fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}><Users size={22} /> Live Ranks</h3>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div className="glass-panel" style={{ padding: '0.8rem' }}>
+            <h3 style={{ marginBottom: '0.6rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Users size={16} /> Live Ranks</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.5rem' }}>
               {allPlayers.map((p, idx) => (
                 <div key={p.id} style={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  padding: '1rem 1.2rem', 
-                  background: p.name === playerName ? 'rgba(99, 102, 241, 0.3)' : 'rgba(255,255,255,0.05)', 
-                  borderRadius: '14px', 
-                  fontSize: '1.1rem',
-                  border: p.name === playerName ? '2px solid var(--primary)' : '1px solid rgba(255,255,255,0.1)',
-                  alignItems: 'center',
-                  minHeight: '60px'
+                  display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.8rem', 
+                  background: p.name === playerName ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255,255,255,0.05)', 
+                  borderRadius: '10px', border: p.name === playerName ? '1px solid var(--primary)' : '1px solid transparent',
+                  alignItems: 'center', minHeight: '40px'
                 }}>
-                  <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
-                    <span style={{ width: '24px', fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '1rem' }}>{idx + 1}</span>
-                    <span style={{ fontWeight: p.name === playerName ? '900' : '500' }}>{p.name} {p.finished && <CheckCircle2 size={16} style={{ display: 'inline', color: 'var(--success)', marginLeft: '6px' }} />}</span>
+                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 'bold' }}>{idx + 1}</span>
+                    <span style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'white' }}>{p.name}</span>
                   </div>
-                  <span style={{ fontWeight: '900', color: 'var(--primary)', fontSize: '1.2rem' }}>{p.score}</span>
+                  <span style={{ fontWeight: '900', color: 'var(--primary)', fontSize: '0.9rem', marginLeft: '0.4rem' }}>{p.score}</span>
                 </div>
               ))}
-              <div style={{ flex: 1 }}></div>
             </div>
           </div>
         )}
