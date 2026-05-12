@@ -254,38 +254,73 @@ export default function IshiharaGame() {
 
   return (
     <div className="container" style={{ padding: '0.5rem' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: roomCode ? '1fr 280px' : '1fr', gap: '1rem', width: '100%', maxWidth: '1100px' }}>
-        <div className="glass-panel" style={{ textAlign: 'center', padding: '1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.5rem 1.5rem', borderRadius: '15px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Hash size={16} /> <span style={{ fontWeight: 'bold' }}>{currentQ + 1} / {totalQuestions}</span></div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: timeLeft <= 5 ? 'var(--danger)' : 'white' }}><Timer size={16} /> <span style={{ fontWeight: 'bold' }}>{timeLeft}s</span></div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Star size={16} /> <span style={{ fontWeight: 'bold' }}>{score}</span></div>
+      <div style={{ 
+        display: 'grid', 
+        gridTemplateColumns: roomCode ? '1fr 300px' : '1fr', 
+        gap: '1rem', 
+        width: '100%', 
+        maxWidth: '1200px',
+        alignItems: 'stretch'
+      }}>
+        <div className="glass-panel" style={{ textAlign: 'center', padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.6rem 1.8rem', borderRadius: '15px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Hash size={18} /> <span style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{currentQ + 1} / {totalQuestions}</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: timeLeft <= 5 ? 'var(--danger)' : 'white' }}><Timer size={18} /> <span style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{timeLeft}s</span></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Star size={18} /> <span style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{score}</span></div>
           </div>
 
-          <div style={{ background: 'white', padding: '1rem', borderRadius: '18px', marginBottom: '1rem', display: 'inline-block', boxShadow: '0 0 20px rgba(255,255,255,0.1)' }}>
-            <img src={q.image} alt="Test" style={{ width: '220px', height: '220px', objectFit: 'contain' }} />
+          <div style={{ background: 'white', padding: '1.5rem', borderRadius: '28px', marginBottom: '1.5rem', display: 'inline-block', alignSelf: 'center', boxShadow: '0 0 40px rgba(255,255,255,0.1)' }}>
+            <img src={q.image} alt="Test" style={{ width: '320px', height: '320px', objectFit: 'contain' }} />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', maxWidth: '400px', margin: '0 auto' }}>
+          <p style={{ fontSize: '1.4rem', marginBottom: '1.5rem', color: 'white', fontWeight: 'bold', letterSpacing: '0.05em' }}>
+            What number do you see?
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.2rem', width: '100%', maxWidth: '600px', margin: '0 auto' }}>
             {q.opts.map((opt, i) => (
-              <button key={i} className="btn btn-secondary" style={{ fontSize: '1.2rem', padding: '0.8rem' }} onClick={() => nextQuestion(opt === q.c)}>{opt}</button>
+              <button 
+                key={i} 
+                className="btn btn-secondary" 
+                style={{ 
+                  fontSize: '1.5rem', 
+                  padding: '1.2rem', 
+                  fontWeight: '900', 
+                  borderRadius: '16px',
+                  boxShadow: '0 4px 15px rgba(0,0,0,0.2)'
+                }} 
+                onClick={() => nextQuestion(opt === q.c)}
+              >
+                {opt}
+              </button>
             ))}
           </div>
         </div>
 
         {roomCode && (
-          <div className="glass-panel" style={{ padding: '1rem' }}>
-            <h3 style={{ marginBottom: '1rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Users size={18} /> Live Ranks</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <div className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
+            <h3 style={{ marginBottom: '1.5rem', fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}><Users size={22} /> Live Ranks</h3>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {allPlayers.map((p, idx) => (
-                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem', background: p.name === playerName ? 'rgba(99, 102, 241, 0.2)' : 'rgba(0,0,0,0.3)', borderRadius: '8px', fontSize: '0.85rem' }}>
-                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                    <span style={{ width: '15px', fontWeight: 'bold', color: 'var(--text-muted)' }}>{idx + 1}</span>
-                    <span>{p.name} {p.finished && <CheckCircle2 size={12} style={{ display: 'inline', color: 'var(--success)' }} />}</span>
+                <div key={p.id} style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  padding: '1rem 1.2rem', 
+                  background: p.name === playerName ? 'rgba(99, 102, 241, 0.3)' : 'rgba(255,255,255,0.05)', 
+                  borderRadius: '14px', 
+                  fontSize: '1.1rem',
+                  border: p.name === playerName ? '2px solid var(--primary)' : '1px solid rgba(255,255,255,0.1)',
+                  alignItems: 'center',
+                  minHeight: '60px'
+                }}>
+                  <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
+                    <span style={{ width: '24px', fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '1rem' }}>{idx + 1}</span>
+                    <span style={{ fontWeight: p.name === playerName ? '900' : '500' }}>{p.name} {p.finished && <CheckCircle2 size={16} style={{ display: 'inline', color: 'var(--success)', marginLeft: '6px' }} />}</span>
                   </div>
-                  <span style={{ fontWeight: 'bold' }}>{p.score}</span>
+                  <span style={{ fontWeight: '900', color: 'var(--primary)', fontSize: '1.2rem' }}>{p.score}</span>
                 </div>
               ))}
+              <div style={{ flex: 1 }}></div>
             </div>
           </div>
         )}

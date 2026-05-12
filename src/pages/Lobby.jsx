@@ -14,20 +14,22 @@ export default function Lobby() {
     try {
       const { data: roomsData, error: roomsError } = await supabase
         .from('rooms')
-        .select(`
-          *,
-          players(count)
-        `)
+        .select('*, players(*)')
         .eq('type', 'public')
         .eq('status', 'waiting')
         .order('created_at', { ascending: false });
 
       if (roomsError) throw roomsError;
 
-      const formatted = roomsData.map(r => ({
+      // Filter: Hanya tampilkan room yang punya minimal 1 manusia
+      const validRooms = (roomsData || []).filter(r => 
+        r.players && r.players.some(p => !p.is_bot)
+      );
+
+      const formatted = validRooms.map(r => ({
         code: r.code,
         host: r.host_name,
-        players: r.players[0]?.count || 0,
+        players: r.players.length,
         maxPlayers: 8,
         status: r.status
       }));

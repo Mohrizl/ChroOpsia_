@@ -28,6 +28,7 @@ export default function ColorRaceGame() {
   const [waitingForOthers, setWaitingForOthers] = useState(false);
   const [allPlayers, setAllPlayers] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showAnswer, setShowAnswer] = useState(false);
 
   const scoreRef = useRef(0);
   const correctRef = useRef(0);
@@ -56,6 +57,7 @@ export default function ColorRaceGame() {
 
     const shuffled = [...opts].sort(() => Math.random() - 0.5);
     setOptions(shuffled);
+    setShowAnswer(false);
   }, []);
 
   const fetchGameState = useCallback(async () => {
@@ -176,7 +178,7 @@ export default function ColorRaceGame() {
   };
 
   const handleGuess = (color) => {
-    if (isProcessing) return;
+    if (isProcessing || showAnswer) return;
     if (color === targetColor) {
       setIsProcessing(true);
       const pts = Math.max(50, Math.floor(400 * (timeLeft / timePerQuestion)));
@@ -199,15 +201,24 @@ export default function ColorRaceGame() {
   };
 
   useEffect(() => {
-    if (setupMode || waitingForOthers) return;
+    if (setupMode || waitingForOthers || showAnswer) return;
     const timer = setInterval(() => {
       setTimeLeft(t => {
-        if (t <= 0) { if (!isProcessing) { setIsProcessing(true); nextQuestion(); } return 0; }
+        if (t <= 0) { 
+            if (!isProcessing) { 
+                setIsProcessing(true); 
+                setShowAnswer(true);
+                setTimeout(() => {
+                    nextQuestion();
+                }, 2000);
+            } 
+            return 0; 
+        }
         return t - 1;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [setupMode, waitingForOthers, currentQuestion, timePerQuestion, isProcessing]);
+  }, [setupMode, waitingForOthers, currentQuestion, timePerQuestion, isProcessing, showAnswer]);
 
   if (setupMode) {
     return (
@@ -250,8 +261,16 @@ export default function ColorRaceGame() {
 
   return (
     <div className="container" style={{ padding: '0.5rem' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%', maxWidth: '900px', margin: '0 auto' }}>
-        <div className="glass-panel" style={{ textAlign: 'center', padding: '1rem' }}>
+      <div style={{ 
+        display: 'grid', 
+        gridTemplateColumns: roomCode ? '1fr 300px' : '1fr', 
+        gap: '1rem', 
+        width: '100%', 
+        maxWidth: '1200px',
+        margin: '0 auto',
+        alignItems: 'stretch'
+      }}>
+        <div className="glass-panel" style={{ textAlign: 'center', padding: '1rem', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.5rem 1.5rem', borderRadius: '15px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Hash size={16} /> <span style={{ fontWeight: 'bold' }}>{currentQuestion} / {totalQuestions}</span></div>
@@ -260,37 +279,60 @@ export default function ColorRaceGame() {
           </div>
 
           <div style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-             <p style={{ fontSize: '1.2rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+             <p style={{ fontSize: '1.2rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'white' }}>
                 <Target size={20} color="var(--primary)" /> Find the color:
              </p>
-             <div style={{ width: '60px', height: '60px', background: targetColor, borderRadius: '50%', border: '3px solid white', boxShadow: '0 0 15px rgba(255,255,255,0.2)' }} />
+             <div style={{ width: '80px', height: '80px', background: targetColor, borderRadius: '50%', border: '4px solid white', boxShadow: '0 0 20px rgba(255,255,255,0.2)' }} />
           </div>
 
           <div style={{ 
             display: 'grid', 
             gridTemplateColumns: `repeat(${getLevelConfig(currentQuestion).gridSize}, 1fr)`, 
-            gap: '8px', marginBottom: '0.5rem', margin: '0 auto', 
-            width: '100%', maxWidth: '380px', aspectRatio: '1/1' 
+            gap: '10px', marginBottom: '0.5rem', margin: '0 auto', 
+            width: '100%', maxWidth: '420px', aspectRatio: '1/1' 
           }}>
             {options.map((color, i) => (
-              <button key={i} className="color-box" style={{ background: color, borderRadius: '10px', border: 'none', cursor: 'pointer', transition: 'all 0.1s' }} onClick={() => handleGuess(color)} />
+              <button 
+                key={i} 
+                className="color-box" 
+                style={{ 
+                    background: color, 
+                    borderRadius: '14px', 
+                    border: (showAnswer && color === targetColor) ? '4px solid var(--success)' : 'none', 
+                    cursor: (isProcessing || showAnswer) ? 'default' : 'pointer', 
+                    transition: 'all 0.1s',
+                    boxShadow: (showAnswer && color === targetColor) ? '0 0 15px var(--success)' : 'none'
+                }} 
+                onClick={() => handleGuess(color)} 
+              />
             ))}
           </div>
         </div>
 
         {roomCode && (
-          <div className="glass-panel" style={{ padding: '1rem' }}>
-            <h3 style={{ marginBottom: '0.8rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Users size={18} /> Live Ranks</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.5rem' }}>
+          <div className="glass-panel" style={{ padding: '1.2rem', display: 'flex', flexDirection: 'column' }}>
+            <h3 style={{ marginBottom: '1.2rem', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={20} /> Live Ranks</h3>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
               {allPlayers.map((p, idx) => (
-                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.8rem', background: p.name === playerName ? 'rgba(99, 102, 241, 0.2)' : 'rgba(0,0,0,0.3)', borderRadius: '8px', fontSize: '0.85rem' }}>
-                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                    <span style={{ width: '15px', fontWeight: 'bold', fontSize: '0.8rem' }}>{idx + 1}</span>
-                    <span>{p.name} {p.finished && <CheckCircle2 size={12} style={{ display: 'inline', color: 'var(--success)' }} />}</span>
+                <div key={p.id} style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  padding: '0.8rem 1rem', 
+                  background: p.name === playerName ? 'rgba(99, 102, 241, 0.3)' : 'rgba(255,255,255,0.05)', 
+                  borderRadius: '12px', 
+                  fontSize: '1rem',
+                  border: p.name === playerName ? '1px solid var(--primary)' : '1px solid transparent',
+                  alignItems: 'center',
+                  minHeight: '50px'
+                }}>
+                  <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                    <span style={{ width: '20px', fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.9rem' }}>{idx + 1}</span>
+                    <span style={{ fontWeight: p.name === playerName ? 'bold' : 'normal' }}>{p.name} {p.finished && <CheckCircle2 size={14} style={{ display: 'inline', color: 'var(--success)', marginLeft: '4px' }} />}</span>
                   </div>
-                  <span style={{ fontWeight: 'bold' }}>{p.score}</span>
+                  <span style={{ fontWeight: 'bold', color: 'var(--primary)' }}>{p.score}</span>
                 </div>
               ))}
+              <div style={{ flex: 1 }}></div>
             </div>
           </div>
         )}
