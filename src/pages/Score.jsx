@@ -25,7 +25,7 @@ export default function Score() {
           <div style={{ display: 'inline-block', padding: '0.5rem 1.5rem', borderRadius: '30px', background: 'var(--success)', color: 'white', fontWeight: '900', marginBottom: '1rem', fontSize: '1.2rem' }}>
             HASIL MATA NORMAL
           </div>
-          <p style={{ fontSize: '1.1rem', color: 'white', lineHeight: '1.6' }}>
+          <p style={{ fontSize: '1.1rem', color: 'var(--text-main)', lineHeight: '1.6' }}>
             Selamat! Kamu menjawab benar <strong>{finalCorrect} dari {total}</strong> soal.
           </p>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
@@ -39,7 +39,7 @@ export default function Score() {
           <div style={{ display: 'inline-block', padding: '0.5rem 1.5rem', borderRadius: '30px', background: 'var(--danger)', color: 'white', fontWeight: '900', marginBottom: '1rem', fontSize: '1.2rem' }}>
             HASIL TERINDIKASI BUTA WARNA
           </div>
-          <p style={{ fontSize: '1.1rem', color: 'white', lineHeight: '1.6' }}>
+          <p style={{ fontSize: '1.1rem', color: 'var(--text-main)', lineHeight: '1.6' }}>
             Kamu menjawab benar <strong>{finalCorrect} dari {total}</strong> soal.
           </p>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
@@ -92,7 +92,7 @@ export default function Score() {
             <button className="btn btn-primary" onClick={() => navigate('/select-mode', { state: { ...location.state, players: undefined } })}>
               <RotateCcw size={20} /> Play Again
             </button>
-            <button className="btn btn-secondary" onClick={() => navigate('/')}>
+            <button className="btn btn-secondary" onClick={() => navigate('/home')}>
               <Home size={20} /> Home
             </button>
           </div>
@@ -102,7 +102,7 @@ export default function Score() {
         {roomCode && (
           <div className="leaderboard" style={{ width: '300px', borderLeft: '1px solid var(--glass-border)', paddingLeft: '2rem', margin: 0 }}>
             <h3 style={{ marginBottom: '1.5rem', color: 'var(--text-muted)' }}>Final Standings</h3>
-            <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+            <div style={{ background: 'var(--input-bg)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
               {leaderboard.map((p, idx) => (
                 <div key={idx} className="leaderboard-item" style={{
                   background: p.name === (playerName || 'You') ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
@@ -111,7 +111,7 @@ export default function Score() {
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     {idx === 0 ? <Crown size={18} color="#fbbf24" /> : <span style={{ width: '18px', textAlign: 'center', fontWeight: 'bold', color: 'var(--text-muted)' }}>{idx + 1}</span>}
-                    <span style={{ fontWeight: p.name === (playerName || 'You') ? '800' : '400', color: p.name === (playerName || 'You') ? 'white' : 'var(--text-main)' }}>
+                    <span style={{ fontWeight: p.name === (playerName || 'You') ? '800' : '400', color: 'var(--text-main)' }}>
                       {p.name}
                     </span>
                   </div>

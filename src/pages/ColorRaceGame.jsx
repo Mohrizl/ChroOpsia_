@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Timer, Star, Hash, Users, CheckCircle2, Target } from 'lucide-react';
+import { Timer, Star, Hash, Users, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const getLevelConfig = (q) => {
@@ -30,6 +30,7 @@ export default function ColorRaceGame() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
   const [scorePopups, setScorePopups] = useState([]);
+  const answerTimeoutRef = useRef(null);
 
   const scoreRef = useRef(0);
   const correctRef = useRef(0);
@@ -131,11 +132,16 @@ export default function ColorRaceGame() {
   };
 
   const nextQuestion = () => {
-    if (currentQuestion >= totalQuestions) { handleFinishGame(score, correctCount); }
-    else {
-      const nq = currentQuestion + 1; setCurrentQuestion(nq); setTimeLeft(timePerQuestion); generateColors(nq);
-      setTimeout(() => setIsProcessing(false), 200);
+    setShowAnswer(false);
+    setIsProcessing(false);
+    if (currentQuestion >= totalQuestions) {
+      handleFinishGame(score, correctCount);
+      return;
     }
+    const nq = currentQuestion + 1;
+    setCurrentQuestion(nq);
+    setTimeLeft(timePerQuestion);
+    generateColors(nq);
   };
 
   const handleFinishGame = async (fs, fcc) => {
@@ -149,6 +155,7 @@ export default function ColorRaceGame() {
 
   const handleGuess = (color) => {
     if (isProcessing || showAnswer) return;
+    if (answerTimeoutRef.current) clearTimeout(answerTimeoutRef.current);
     if (color === targetColor) {
       setIsProcessing(true);
       setShowAnswer(true);
@@ -158,7 +165,7 @@ export default function ColorRaceGame() {
       setScorePopups(prev => [...prev, { id: Date.now(), val: pts }]);
       setTimeout(() => setScorePopups(prev => prev.slice(1)), 1000);
 
-      setTimeout(() => {
+      answerTimeoutRef.current = setTimeout(() => {
         if (roomCode) { supabase.from('players').update({ score: ns, current_question: currentQuestion + 1, correct_count: ncc, finished: currentQuestion >= totalQuestions }).eq('room_code', roomCode).eq('name', playerName).then(); }
         nextQuestion();
       }, 1500);
@@ -170,7 +177,7 @@ export default function ColorRaceGame() {
     const timer = setInterval(() => {
       setTimeLeft(t => {
         if (t <= 0) { 
-          if (!isProcessing) { setIsProcessing(true); setShowAnswer(true); setTimeout(() => nextQuestion(), 2000); }
+          if (!isProcessing) { setIsProcessing(true); setShowAnswer(true); answerTimeoutRef.current = setTimeout(() => nextQuestion(), 800); }
           return 0; 
         }
         return t - 1;
@@ -179,15 +186,21 @@ export default function ColorRaceGame() {
     return () => clearInterval(timer);
   }, [setupMode, waitingForOthers, currentQuestion, timePerQuestion, isProcessing, showAnswer]);
 
+  useEffect(() => {
+    return () => {
+      if (answerTimeoutRef.current) clearTimeout(answerTimeoutRef.current);
+    };
+  }, []);
+
   if (setupMode) {
     return (
-      <div className="container">
+      <div className="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', paddingTop: '2rem', paddingBottom: '2rem' }}>
         <div className="glass-panel" style={{ width: '100%', maxWidth: '400px', textAlign: 'center', padding: '1.5rem' }}>
           <h2 className="title text-gradient" style={{ fontSize: '1.8rem', marginBottom: '1.2rem' }}>Game Setup</h2>
           <div style={{ marginBottom: '1.2rem' }}>
             <p style={{ color: 'var(--text-muted)', marginBottom: '0.6rem', fontSize: '0.9rem' }}>Seconds per question:</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.6rem' }}>
-              {[10, 20, 30, 40, 50, 60].map(t => (
+              {[5, 10, 15, 20, 25, 30].map(t => (
                 <button key={t} className={`btn ${timePerQuestion === t ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '0.4rem', fontSize: '0.85rem' }} onClick={() => setTimePerQuestion(t)}>{t}s</button>
               ))}
             </div>
@@ -200,7 +213,7 @@ export default function ColorRaceGame() {
 
   if (waitingForOthers) {
     return (
-      <div className="container">
+      <div className="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', paddingTop: '2rem', paddingBottom: '2rem' }}>
         <div className="glass-panel" style={{ width: '100%', maxWidth: '450px', textAlign: 'center', padding: '1.5rem' }}>
           <h2 className="title text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>Finished!</h2>
           <p style={{ color: 'var(--primary)', fontWeight: 'bold', fontSize: '1rem', marginBottom: '1rem' }}>Waiting for other players...</p>
@@ -219,23 +232,27 @@ export default function ColorRaceGame() {
   }
 
   return (
-    <div className="container" style={{ padding: '0.3rem' }}>
+    <div className="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', paddingTop: '1rem', paddingBottom: '1rem', minHeight: '100vh' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', width: '100%', maxWidth: '850px', margin: '0 auto' }}>
-        <div className="glass-panel" style={{ textAlign: 'center', padding: '0.8rem', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.8rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.4rem 1.2rem', borderRadius: '12px', position: 'relative' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem' }}><Hash size={14} /> <span>{currentQuestion}/{totalQuestions}</span></div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: timeLeft <= 5 ? 'var(--danger)' : 'white', fontSize: '0.9rem' }}><Timer size={14} /> <span>{timeLeft}s</span></div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.9rem', position: 'relative' }}>
-                <Star size={14} /> <span>{score}</span>
-                {scorePopups.map(p => (
-                    <div key={p.id} className="score-popup" style={{ top: '-20px', right: '0' }}>+{p.val}</div>
-                ))}
+        <div className="glass-panel" style={{ textAlign: 'center', padding: '0.8rem', display: 'flex', flexDirection: 'column', position: 'relative', margin: '0 auto', width: '100%', maxWidth: 'none' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+            <div style={{ padding: '0.9rem 1rem', borderRadius: '18px', background: 'var(--input-bg)', border: '1px solid var(--glass-border)', minWidth: '120px' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Question</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-main)' }}>{currentQuestion}/{totalQuestions}</div>
+            </div>
+            <div style={{ padding: '0.9rem 1rem', borderRadius: '18px', background: 'var(--input-bg)', border: '1px solid var(--glass-border)', minWidth: '120px' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Time</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: '800', color: timeLeft <= 5 ? 'var(--danger)' : 'var(--text-main)' }}>{timeLeft}s</div>
+            </div>
+            <div style={{ padding: '0.9rem 1rem', borderRadius: '18px', background: 'var(--input-bg)', border: '1px solid var(--glass-border)', minWidth: '120px' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Score</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-main)' }}>{score}</div>
             </div>
           </div>
-          <div style={{ marginBottom: '0.8rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
-             <p style={{ fontSize: '0.9rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'white' }}><Target size={14} color="var(--primary)" /> Find the color:</p>
-             <div style={{ width: '50px', height: '50px', background: targetColor, borderRadius: '50%', border: '3px solid white' }} />
-          </div>
+           <div style={{ marginBottom: '0.8rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
+             <p style={{ fontSize: '1rem', fontWeight: '800', color: 'var(--text-main)', margin: 0 }}>Guess the correct color</p>
+             <div style={{ width: '54px', height: '54px', background: targetColor, borderRadius: '50%', border: '3px solid rgba(255,255,255,0.9)' }} />
+           </div>
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(${getLevelConfig(currentQuestion).gridSize}, 1fr)`, gap: '6px', margin: '0 auto', width: '100%', maxWidth: '320px', aspectRatio: '1/1' }}>
             {options.map((color, i) => (
               <button 
@@ -255,14 +272,14 @@ export default function ColorRaceGame() {
           </div>
         </div>
         {roomCode && (
-          <div className="glass-panel" style={{ padding: '0.8rem' }}>
+          <div className="glass-panel" style={{ padding: '0.8rem', margin: '0 auto', width: '100%', maxWidth: 'none' }}>
             <h3 style={{ marginBottom: '0.6rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Users size={16} /> Live Ranks</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.5rem' }}>
               {allPlayers.map((p, idx) => (
-                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.8rem', background: p.name === playerName ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255,255,255,0.05)', borderRadius: '10px', border: p.name === playerName ? '1px solid var(--primary)' : '1px solid transparent', alignItems: 'center', minHeight: '40px' }}>
+                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.8rem', background: p.name === playerName ? 'var(--input-bg)' : 'var(--panel-bg)', borderRadius: '10px', border: p.name === playerName ? '1px solid var(--primary)' : '1px solid transparent', alignItems: 'center', minHeight: '40px' }}>
                   <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 'bold' }}>{idx + 1}</span>
-                    <span style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'white' }}>{p.name}</span>
+                    <span style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-main)' }}>{p.name}</span>
                   </div>
                   <span style={{ fontWeight: '900', color: 'var(--primary)', fontSize: '0.9rem', marginLeft: '0.4rem' }}>{p.score}</span>
                 </div>

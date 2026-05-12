@@ -4,59 +4,91 @@ import { Palette, Eye, ArrowLeft } from 'lucide-react';
 export default function GameModeSelect() {
   const navigate = useNavigate();
   const location = useLocation();
-  const gameState = location.state || {}; // contains solo/multiplayer info
+  const gameState = location.state || {};
+  const playerName = gameState.playerName || localStorage.getItem('guestName') || '';
+  const stateWithName = { ...gameState, playerName };
 
   const handleSelect = (gameType) => {
     if (gameState.roomCode) {
-      // Multiplayer mode: host selected game, go to waiting room
-      navigate('/waiting-room', { state: { ...gameState, gameType } });
+      navigate('/waiting-room', { state: { ...stateWithName, gameType } });
     } else {
-      // Solo mode
       if (gameType === 'color-race') {
-        navigate('/game/color-race', { state: { ...gameState } });
+        navigate('/game/color-race', { state: { ...stateWithName } });
       } else {
-        navigate('/game/ishihara', { state: { ...gameState } });
+        navigate('/game/ishihara', { state: { ...stateWithName } });
       }
     }
   };
 
   return (
     <div className="container">
-      <div className="glass-panel" style={{ maxWidth: '800px', width: '100%', textAlign: 'center', position: 'relative' }}>
+      <div className="glass-panel" style={{ maxWidth: '900px', width: '100%', textAlign: 'center', position: 'relative' }}>
         <button 
           onClick={() => navigate(-1)} 
-          style={{ position: 'absolute', top: '1.5rem', left: '1.5rem', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+          className="btn-secondary"
+          style={{ position: 'absolute', top: '2rem', left: '2rem', width: 'auto', padding: '0.5rem', borderRadius: '12px' }}
           title="Go Back"
         >
-          <ArrowLeft size={24} />
+          <ArrowLeft size={20} />
         </button>
-        <h2 className="title text-gradient" style={{ fontSize: '3rem', marginTop: '1rem' }}>Select Game Mode</h2>
-        <p className="subtitle">Choose your visual challenge</p>
+        
+        <h2 className="title text-gradient" style={{ fontSize: '3rem', marginTop: '1rem' }}>Choose Your Challenge</h2>
+        <p className="subtitle">Select a mode to test your visual perception</p>
 
-        <div style={{ display: 'flex', gap: '2rem', justifyContent: 'center', flexWrap: 'wrap', marginTop: '3rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem', marginTop: '2rem' }}>
           
           <div 
             className="glass-panel" 
-            style={{ flex: '1', minWidth: '250px', cursor: 'pointer', transition: 'transform 0.3s' }}
+            style={{ 
+              background: 'var(--input-bg)', 
+              border: '2px solid transparent',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              cursor: 'pointer'
+            }}
             onClick={() => handleSelect('color-race')}
-            onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
-            onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-10px)';
+              e.currentTarget.style.borderColor = 'var(--primary)';
+              e.currentTarget.style.boxShadow = '0 20px 40px rgba(99, 102, 241, 0.2)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.borderColor = 'transparent';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
           >
-            <Palette size={48} color="var(--primary)" style={{ marginBottom: '1rem' }} />
-            <h3>Color Match Racing</h3>
-            <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem' }}>Find the exact matching shade as fast as possible before time runs out!</p>
+            <div style={{ background: 'rgba(99, 102, 241, 0.1)', width: '80px', height: '80px', borderRadius: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+              <Palette size={40} color="var(--primary)" />
+            </div>
+            <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Color Match Racing</h3>
+            <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>Find the exact matching shade as fast as possible before time runs out! Test your speed and accuracy.</p>
           </div>
 
           <div 
             className="glass-panel" 
-            style={{ flex: '1', minWidth: '250px', cursor: 'pointer', transition: 'transform 0.3s' }}
+            style={{ 
+              background: 'var(--input-bg)', 
+              border: '2px solid transparent',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              cursor: 'pointer'
+            }}
             onClick={() => handleSelect('ishihara')}
-            onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
-            onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-10px)';
+              e.currentTarget.style.borderColor = 'var(--secondary)';
+              e.currentTarget.style.boxShadow = '0 20px 40px rgba(236, 72, 153, 0.2)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.borderColor = 'transparent';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
           >
-            <Eye size={48} color="var(--secondary)" style={{ marginBottom: '1rem' }} />
-            <h3>Ishihara Challenge</h3>
-            <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem' }}>Test your color vision by identifying hidden numbers with tricky distractors!</p>
+            <div style={{ background: 'rgba(236, 72, 153, 0.1)', width: '80px', height: '80px', borderRadius: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+              <Eye size={40} color="var(--secondary)" />
+            </div>
+            <h3 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Ishihara Challenge</h3>
+            <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>Identify hidden numbers within complex patterns. A classic test of color deficiency and perception.</p>
           </div>
 
         </div>

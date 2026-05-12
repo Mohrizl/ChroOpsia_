@@ -10,19 +10,34 @@ export default function Lobby() {
   const [error, setError] = useState('');
   const [publicRooms, setPublicRooms] = useState([]);
 
+  // Auto-fill player name from auth or guest session
+  useEffect(() => {
+    const guestName = localStorage.getItem('guestName');
+    if (guestName) {
+      setPlayerName(guestName);
+      return;
+    }
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.email) {
+        const name = session.user.user_metadata?.full_name || session.user.email.split('@')[0];
+        setPlayerName(name);
+      }
+    });
+  }, []);
+
   const fetchRooms = async () => {
     try {
-      // Cleanup abandoned rooms (lazy cleanup)
-      const twoMinsAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+      const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       const { data: allRooms } = await supabase.from('rooms').select('*, players(*)');
-      
+
       if (allRooms) {
         for (const r of allRooms) {
           const hasHumans = r.players && r.players.some(p => !p.is_bot);
-          const lastUpdated = r.updated_at || r.created_at;
-          const isOld = lastUpdated < twoMinsAgo;
-
-          if (!hasHumans || (isOld && r.status === 'waiting')) {
+          const createdAt = r.created_at;
+          const isOld = createdAt < fiveMinsAgo;
+          
+          // Only delete if it's old AND empty, or if it's very old and still waiting
+          if (isOld && (!hasHumans || r.status === 'waiting')) {
             await supabase.from('rooms').delete().eq('id', r.id);
           }
         }
@@ -36,15 +51,9 @@ export default function Lobby() {
         .order('created_at', { ascending: false });
 
       if (roomsError) throw roomsError;
-
       const formatted = (roomsData || []).map(r => ({
-        code: r.code,
-        host: r.host_name,
-        players: r.players.length,
-        maxPlayers: 8,
-        status: r.status
+        code: r.code, host: r.host_name, players: r.players.length, maxPlayers: 8, status: r.status
       }));
-
       setPublicRooms(formatted);
     } catch (err) {
       console.error('Error fetching rooms:', err);
@@ -55,10 +64,10 @@ export default function Lobby() {
     fetchRooms();
     const channel = supabase
       .channel('lobby-rooms')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => { fetchRooms(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, () => { fetchRooms(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => fetchRooms())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, () => fetchRooms())
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => supabase.removeChannel(channel);
   }, []);
 
   const generateRoomCode = (type) => {
@@ -74,104 +83,136 @@ export default function Lobby() {
 
     try {
       const { data: room, error: roomError } = await supabase.from('rooms').select('*').eq('code', codeToJoin).single();
-      if (roomError || !room) { setError('Room tidak ditemukan'); return; }
-      if (room.status !== 'waiting') { setError('Game sedang berlangsung'); return; }
+      if (roomError || !room) { setError('Room not found'); return; }
+      if (room.status !== 'waiting') { setError('Game already in progress'); return; }
 
-      const { count, error: countError } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('room_code', codeToJoin);
-      if (countError) throw countError;
-      if (count >= 8) { setError('Room sudah penuh'); return; }
+      const { count } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('room_code', codeToJoin);
+      if (count >= 8) { setError('Room is full'); return; }
 
-      const { error: joinError } = await supabase.from('players').insert([{ 
-        room_code: codeToJoin, 
-        name: playerName.trim(),
-        ready: false,
-        score: 0,
-        current_question: 1,
-        finished: false
+      const { error: joinError } = await supabase.from('players').insert([{
+        room_code: codeToJoin, name: playerName.trim(), ready: false, score: 0, current_question: 1, finished: false
       }]);
 
       if (joinError) {
-        if (joinError.code === '23505') setError('Nama sudah digunakan dalam room');
+        if (joinError.code === '23505') setError('Name already taken in this room');
         else throw joinError;
         return;
       }
-
       navigate('/waiting-room', { state: { roomCode: codeToJoin, playerName: playerName.trim(), isHost: false } });
-    } catch (err) { setError('Gagal masuk ke room'); }
+    } catch (err) { setError('Failed to join room'); }
   };
 
   const createRoom = async (type) => {
     if (!playerName.trim()) { setError('Please enter your name first'); return; }
     const code = generateRoomCode(type);
     try {
-      await supabase.from('rooms').insert([{ 
-        code, 
-        type, 
-        host_name: playerName.trim(),
-        status: 'waiting',
-        game_type: 'color-race',
-        time_limit: 20 // Default 20s
-      }]);
-
-      await supabase.from('players').insert([{ 
-        room_code: code, 
-        name: playerName.trim(),
-        ready: true,
-        score: 0,
-        current_question: 1,
-        finished: false
-      }]);
-
+      await supabase.from('rooms').insert([{ code, type, host_name: playerName.trim(), status: 'waiting', game_type: 'color-race', time_limit: 20, num_questions: 14 }]);
+      await supabase.from('players').insert([{ room_code: code, name: playerName.trim(), ready: true, score: 0, current_question: 1, finished: false }]);
       navigate('/select-mode', { state: { type, roomCode: code, playerName: playerName.trim(), isHost: true } });
-    } catch (err) { setError('Gagal membuat room'); }
+    } catch (err) { setError('Failed to create room'); }
   };
-
-  const handleCreatePublic = () => createRoom('public');
-  const handleCreatePrivate = () => createRoom('private');
 
   return (
     <div className="container">
       <style>{`
-        .lobby-grid { display: grid; grid-template-columns: 1fr 360px; gap: 2rem; align-items: start; }
-        .public-room-list { max-height: calc(100vh - 300px); overflow-y: auto; }
-        @media (max-width: 860px) { .lobby-grid { grid-template-columns: 1fr; } .public-room-list { max-height: none; } }
+        .lobby-grid { display: grid; grid-template-columns: 1fr 340px; gap: 2rem; align-items: start; }
+        @media (max-width: 860px) { .lobby-grid { grid-template-columns: 1fr; } }
+        .room-item { 
+          display: flex; justify-content: space-between; align-items: center;
+          background: var(--input-bg); padding: 1rem 1.2rem; border-radius: 14px;
+          border: 1px solid var(--glass-border); transition: border-color 0.2s;
+        }
+        .room-item:hover { border-color: var(--primary); }
       `}</style>
-      <div className="glass-panel" style={{ maxWidth: '1000px', width: '100%', position: 'relative', padding: '2rem' }}>
-        <button onClick={() => navigate('/')} style={{ position: 'absolute', top: '1.5rem', left: '1.5rem', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
-          <ArrowLeft size={24} />
+
+      <div className="glass-panel" style={{ maxWidth: '1050px', width: '100%', position: 'relative' }}>
+        <button
+          onClick={() => navigate(-1)}
+          style={{ position: 'absolute', top: '2rem', left: '2rem', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+        >
+          <ArrowLeft size={20} />
         </button>
+
         <h2 className="title text-gradient" style={{ fontSize: '2.5rem', textAlign: 'center', marginTop: '1rem' }}>Multiplayer Lobby</h2>
-        <p className="subtitle" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>Play with up to 8 friends!</p>
-        {error && <p style={{ color: 'var(--danger)', textAlign: 'center', marginBottom: '1rem', fontWeight: 'bold' }}>{error}</p>}
+        <p className="subtitle" style={{ textAlign: 'center', marginBottom: '2rem' }}>Play with up to 8 friends!</p>
+
+        {error && (
+          <div style={{ color: 'var(--danger)', textAlign: 'center', marginBottom: '1.5rem', background: 'rgba(239,68,68,0.1)', padding: '0.75rem', borderRadius: '12px', border: '1px solid rgba(239,68,68,0.3)' }}>
+            {error}
+          </div>
+        )}
 
         <div className="lobby-grid">
-          <div className="lobby-panel" style={{ maxWidth: '560px' }}>
-            <div style={{ marginBottom: '2rem' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--text-muted)' }}><User size={18} /> Your Name</label>
-              <input type="text" placeholder="Enter your nickname" className="input-field" value={playerName} onChange={(e) => { setPlayerName(e.target.value); setError(''); }} />
+          {/* Left panel – join / create */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <div className="input-group">
+              <label><User size={16} style={{ verticalAlign: 'middle', marginRight: '0.4rem' }} />Your Name</label>
+              <input
+                type="text"
+                placeholder="Enter your nickname"
+                className="input-field"
+                value={playerName}
+                onChange={(e) => { setPlayerName(e.target.value); setError(''); }}
+              />
             </div>
-            <form onSubmit={handleJoin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem' }}>
-              <input type="text" placeholder="Enter Room Code to Join" className="input-field" value={roomCode} onChange={(e) => setRoomCode(e.target.value.toUpperCase())} />
-              <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Join Private Room <ArrowRight size={20} /></button>
-            </form>
-            <div style={{ display: 'flex', gap: '1rem', flexDirection: 'column' }}>
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>OR CREATE NEW ROOM</div>
-              <button className="btn btn-secondary" onClick={handleCreatePublic} style={{ width: '100%' }}><Globe size={20} /> Create Public Room</button>
-              <button className="btn btn-secondary" onClick={handleCreatePrivate} style={{ width: '100%' }}><Lock size={20} /> Create Private Room</button>
+
+            <div style={{ borderBottom: '1px solid var(--glass-border)', paddingBottom: '1.5rem' }}>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Join with code</p>
+              <form onSubmit={handleJoin} style={{ display: 'flex', gap: '0.75rem' }}>
+                <input
+                  type="text"
+                  placeholder="e.g. PRV-123"
+                  className="input-field"
+                  value={roomCode}
+                  onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                  style={{ flex: 1 }}
+                />
+                <button type="submit" className="btn btn-primary" style={{ width: 'auto', padding: '0 1.5rem', flexShrink: 0 }}>
+                  <ArrowRight size={20} />
+                </button>
+              </form>
+            </div>
+
+            <div>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Create new room</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <button className="btn btn-primary" onClick={() => createRoom('public')}>
+                  <Globe size={20} /> Create Public Room
+                </button>
+                <button className="btn btn-secondary" onClick={() => createRoom('private')}>
+                  <Lock size={20} /> Create Private Room
+                </button>
+              </div>
             </div>
           </div>
-          <div className="lobby-panel lobby-right" style={{ maxWidth: '360px', background: 'rgba(0,0,0,0.1)', borderRadius: '20px', padding: '1.5rem' }}>
-            <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginBottom: '1.5rem', letterSpacing: '0.1em' }}>ACTIVE PUBLIC ROOMS</div>
-            <div className="public-room-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {publicRooms.length === 0 && <div style={{ color: 'var(--text-muted)', textAlign: 'center', fontSize: '0.95rem' }}>No public rooms available yet.</div>}
-              {publicRooms.map(r => (
-                <div key={r.code} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '0.9rem 1rem', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontWeight: '700' }}>{r.code}</span>
-                    <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Host: {r.host} ({r.players}/8)</span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--primary)', fontStyle: 'italic' }}>{r.status === 'playing' ? 'In Game' : 'Waiting...'}</span>
+
+          {/* Right panel – public rooms list */}
+          <div style={{ background: 'var(--input-bg)', borderRadius: '20px', padding: '1.5rem', border: '1px solid var(--glass-border)' }}>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem', textTransform: 'uppercase', letterSpacing: '0.08em', textAlign: 'center' }}>
+              Active Public Rooms
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '420px', overflowY: 'auto' }}>
+              {publicRooms.length === 0 ? (
+                <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem 0', fontSize: '0.95rem' }}>
+                  No public rooms yet.<br />Be the first to create one!
+                </div>
+              ) : publicRooms.map(r => (
+                <div key={r.code} className="room-item">
+                  <div>
+                    <div style={{ fontWeight: '700', marginBottom: '0.2rem' }}>{r.code}</div>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                      Host: {r.host} &bull; {r.players}/8 players
+                    </div>
                   </div>
-                  {r.status !== 'playing' && <button className="btn btn-primary" style={{ padding: '0.55rem 1rem', fontSize: '0.9rem' }} onClick={() => handleJoin(null, r.code)}>Join</button>}
+                  {r.status !== 'playing' && (
+                    <button
+                      className="btn btn-primary"
+                      style={{ width: 'auto', padding: '0.4rem 1rem', fontSize: '0.85rem' }}
+                      onClick={() => handleJoin(null, r.code)}
+                    >
+                      Join
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

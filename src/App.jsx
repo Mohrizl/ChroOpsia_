@@ -1,6 +1,10 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useNavigate } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
 import { Volume2, VolumeX } from 'lucide-react';
+import { ThemeProvider } from './context/ThemeContext';
+import ThemeToggle from './components/ThemeToggle';
+import Login from './pages/Login';
+import SignUp from './pages/SignUp';
 import Home from './pages/Home';
 import Lobby from './pages/Lobby';
 import GameModeSelect from './pages/GameModeSelect';
@@ -8,13 +12,27 @@ import ColorRaceGame from './pages/ColorRaceGame';
 import IshiharaGame from './pages/IshiharaGame';
 import Score from './pages/Score';
 import WaitingRoom from './pages/WaitingRoom';
+import { supabase } from './lib/supabase';
 
 function App() {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [session, setSession] = useState(null);
   const audioRef = useRef(null);
 
-  // Example placeholder music. To change the song, just replace this URL
-  // or put a file in the public folder and use '/song.mp3'
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
   const musicUrl = "https://cdn.pixabay.com/download/audio/2022/05/16/audio_db6591201e.mp3?filename=lofi-study-112191.mp3";
 
   useEffect(() => {
@@ -39,10 +57,18 @@ function App() {
   };
 
   return (
-    <>
-      <div className="glow-effect" />
+    <ThemeProvider>
+      <div className="bg-wrapper">
+        <div className="bg-gradient" />
+        <div className="bg-grid" />
+      </div>
+      
+      <ThemeToggle />
+      
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<Login />} />
+        <Route path="/signup" element={<SignUp />} />
+        <Route path="/home" element={<Home />} />
         <Route path="/lobby" element={<Lobby />} />
         <Route path="/select-mode" element={<GameModeSelect />} />
         <Route path="/waiting-room" element={<WaitingRoom />} />
@@ -54,7 +80,7 @@ function App() {
       <button className="music-toggle" onClick={toggleMusic} title="Toggle Background Music">
         {isPlaying ? <Volume2 size={24} /> : <VolumeX size={24} />}
       </button>
-    </>
+    </ThemeProvider>
   );
 }
 
