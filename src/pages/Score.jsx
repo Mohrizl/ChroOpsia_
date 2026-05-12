@@ -5,7 +5,8 @@ import { useEffect, useState } from 'react';
 export default function Score() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { score, mode, roomCode, playerName, allPlayers, wrongCount, correctCount } = location.state || { score: 0, mode: 'Unknown' };
+  const { score, mode, roomCode, playerName, allPlayers, wrongCount, correctCount, numQuestions } = location.state || { score: 0, mode: 'Unknown' };
+  const total = numQuestions || 14;
 
   // Use passed allPlayers or mock if missing
   const leaderboard = allPlayers || [
@@ -14,46 +15,60 @@ export default function Score() {
 
   const isWinner = roomCode && leaderboard[0]?.name === (playerName || 'You');
 
-  const ishiharaExplanation = () => {
-    const total = 14;
+  const getExplanation = () => {
     const finalWrong = wrongCount !== undefined ? wrongCount : (correctCount !== undefined ? total - correctCount : 0);
     const finalCorrect = total - finalWrong;
+    const accuracy = (finalCorrect / total) * 100;
 
-    if (finalWrong <= 1) {
-      return (
-        <div style={{ marginTop: '1.5rem', background: 'rgba(16, 185, 129, 0.1)', padding: '1.5rem', borderRadius: '16px', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
-          <div style={{ display: 'inline-block', padding: '0.5rem 1.5rem', borderRadius: '30px', background: 'var(--success)', color: 'white', fontWeight: '900', marginBottom: '1rem', fontSize: '1.2rem' }}>
-            HASIL MATA NORMAL
+    if (mode === 'Ishihara Test') {
+      if (finalWrong <= 1) {
+        return (
+          <div style={{ marginTop: '1.5rem', background: 'rgba(16, 185, 129, 0.1)', padding: '1.5rem', borderRadius: '16px', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+            <div style={{ display: 'inline-block', padding: '0.5rem 1.5rem', borderRadius: '30px', background: 'var(--success)', color: 'white', fontWeight: '900', marginBottom: '1rem', fontSize: '1.2rem' }}>
+              HASIL MATA NORMAL
+            </div>
+            <p style={{ fontSize: '1.1rem', color: 'var(--text-main)', lineHeight: '1.6' }}>
+              Selamat! Kamu menjawab benar <strong>{finalCorrect} dari {total}</strong> soal.
+            </p>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+              Hasil ini menunjukkan penglihatan warna normal, mampu membedakan kontras warna yang samar dengan tepat. Ini membuktikan persepsi visual kamu sangat tajam.
+            </p>
           </div>
-          <p style={{ fontSize: '1.1rem', color: 'var(--text-main)', lineHeight: '1.6' }}>
-            Selamat! Kamu menjawab benar <strong>{finalCorrect} dari {total}</strong> soal.
-          </p>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-            Hasil ini menunjukkan penglihatan warna normal, mampu membedakan kontras warna yang samar dengan tepat. Ini membuktikan persepsi visual kamu sangat tajam dan tidak ada kendala dalam mengenali gradasi warna.
-          </p>
-        </div>
-      );
+        );
+      } else {
+        return (
+          <div style={{ marginTop: '1.5rem', background: 'rgba(239, 68, 68, 0.1)', padding: '1.5rem', borderRadius: '16px', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+            <div style={{ display: 'inline-block', padding: '0.5rem 1.5rem', borderRadius: '30px', background: 'var(--danger)', color: 'white', fontWeight: '900', marginBottom: '1rem', fontSize: '1.2rem' }}>
+              TERINDIKASI BUTA WARNA
+            </div>
+            <p style={{ fontSize: '1.1rem', color: 'var(--text-main)', lineHeight: '1.6' }}>
+              Kamu menjawab benar <strong>{finalCorrect} dari {total}</strong> soal.
+            </p>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+              Kesalahan {finalWrong} soal dianggap indikasi buta warna karena mata gagal mengenali pola warna dasar tersebut dengan konsisten.
+            </p>
+          </div>
+        );
+      }
     } else {
+      // Color Race Explanation
+      const isExcellent = accuracy >= 90;
       return (
-        <div style={{ marginTop: '1.5rem', background: 'rgba(239, 68, 68, 0.1)', padding: '1.5rem', borderRadius: '16px', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
-          <div style={{ display: 'inline-block', padding: '0.5rem 1.5rem', borderRadius: '30px', background: 'var(--danger)', color: 'white', fontWeight: '900', marginBottom: '1rem', fontSize: '1.2rem' }}>
-            HASIL TERINDIKASI BUTA WARNA
+        <div style={{ marginTop: '1.5rem', background: isExcellent ? 'rgba(16, 185, 129, 0.1)' : 'rgba(99, 102, 241, 0.1)', padding: '1.5rem', borderRadius: '16px', border: `1px solid ${isExcellent ? 'rgba(16, 185, 129, 0.3)' : 'rgba(99, 102, 241, 0.3)'}` }}>
+          <div style={{ display: 'inline-block', padding: '0.5rem 1.5rem', borderRadius: '30px', background: isExcellent ? 'var(--success)' : 'var(--primary)', color: 'white', fontWeight: '900', marginBottom: '1rem', fontSize: '1.2rem' }}>
+            {isExcellent ? 'VISI TAJAM' : 'HASIL SELESAI'}
           </div>
           <p style={{ fontSize: '1.1rem', color: 'var(--text-main)', lineHeight: '1.6' }}>
-            Kamu menjawab benar <strong>{finalCorrect} dari {total}</strong> soal.
+            Kamu berhasil memilih warna dengan tepat sebanyak <strong>{finalCorrect} dari {total}</strong> soal.
           </p>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-            Kesalahan 2 soal atau lebih dianggap indikasi buta warna karena mata gagal mengenali pola warna dasar tersebut, berarti ada sel saraf mata yang tidak menangkap spektrum warna dengan sempurna.
+            {isExcellent 
+              ? "Luar biasa! Akurasi kamu sangat tinggi dalam membedakan gradasi warna yang sangat mirip dalam waktu singkat." 
+              : "Bagus! Kamu memiliki kemampuan membedakan warna yang cukup baik. Teruslah berlatih untuk meningkatkan kecepatan dan akurasi."}
           </p>
         </div>
       );
     }
-  };
-
-  const colorRaceExplanation = () => {
-    const total = 14;
-    const finalCorrect = correctCount !== undefined ? correctCount : 0;
-    return `Kamu berhasil memilih warna dengan tepat sebanyak ${finalCorrect} dari ${total} soal.`;
   };
 
   return (
@@ -108,16 +123,7 @@ export default function Score() {
           <h2 className="title text-gradient" style={{ fontSize: '3.5rem' }}>{isWinner ? 'Victory!' : 'Match Over!'}</h2>
           <p className="subtitle" style={{ marginBottom: '1.5rem' }}>Mode: {mode} {roomCode ? `| Room: ${roomCode}` : ''}</p>
 
-          {mode === 'Ishihara Test' && (
-            <div style={{ maxWidth: '500px', margin: '0 auto' }}>
-              {ishiharaExplanation()}
-            </div>
-          )}
-          {mode === 'Color Race' && correctCount !== undefined && (
-            <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem', marginTop: '0.8rem', lineHeight: '1.6', maxWidth: '500px', margin: '0.8rem auto' }}>
-              {colorRaceExplanation()}
-            </p>
-          )}
+          {getExplanation()}
 
           <div style={{ 
             fontSize: 'clamp(3rem, 15vw, 5rem)', 

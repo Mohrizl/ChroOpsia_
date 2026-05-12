@@ -33,7 +33,7 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const musicUrl = "https://cdn.pixabay.com/download/audio/2022/05/16/audio_db6591201e.mp3?filename=lofi-study-112191.mp3";
+  const musicUrl = "/public/backphonk.mp3";
 
   useEffect(() => {
     audioRef.current = new Audio(musicUrl);
@@ -62,9 +62,9 @@ function App() {
         <div className="bg-gradient" />
         <div className="bg-grid" />
       </div>
-      
+
       <ThemeToggle />
-      
+
       <Routes>
         <Route path="/" element={<Login />} />
         <Route path="/signup" element={<SignUp />} />
