@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Timer, Star, Hash, Users, CheckCircle2 } from 'lucide-react';
+import { Users } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const getLevelConfig = (q) => {
@@ -11,6 +11,28 @@ const getLevelConfig = (q) => {
 };
 
 const totalQuestions = 14;
+
+function ScoreCounter({ targetScore }) {
+  const [displayScore, setDisplayScore] = useState(targetScore);
+  useEffect(() => {
+    let start = displayScore;
+    const end = targetScore;
+    if (start === end) return;
+    const range = end - start;
+    const duration = 800; 
+    const startTime = performance.now();
+    const animate = (now) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const easeProgress = 1 - Math.pow(1 - progress, 3);
+      const nextValue = Math.floor(start + range * easeProgress);
+      setDisplayScore(nextValue);
+      if (progress < 1) requestAnimationFrame(animate);
+    };
+    requestAnimationFrame(animate);
+  }, [targetScore]);
+  return <span>{displayScore}</span>;
+}
 
 export default function ColorRaceGame() {
   const navigate = useNavigate();
@@ -233,29 +255,6 @@ export default function ColorRaceGame() {
     );
   }
 
-  function ScoreCounter({ targetScore }) {
-    const [displayScore, setDisplayScore] = useState(targetScore);
-    useEffect(() => {
-      let start = displayScore;
-      const end = targetScore;
-      if (start === end) return;
-      let current = start;
-      const range = end - start;
-      const duration = 800; 
-      const startTime = performance.now();
-      const animate = (now) => {
-        const elapsed = now - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-        const easeProgress = 1 - Math.pow(1 - progress, 3);
-        const nextValue = Math.floor(start + range * easeProgress);
-        setDisplayScore(nextValue);
-        if (progress < 1) requestAnimationFrame(animate);
-      };
-      requestAnimationFrame(animate);
-    }, [targetScore]);
-    return <span>{displayScore}</span>;
-  }
-
   return (
     <div className="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', paddingTop: '1rem', paddingBottom: '1rem', minHeight: '100vh' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', width: '100%', maxWidth: '850px', margin: '0 auto' }}>
@@ -271,10 +270,10 @@ export default function ColorRaceGame() {
             </div>
             <div style={{ padding: '0.9rem 1.2rem', borderRadius: '18px', background: 'var(--input-bg)', border: '1px solid var(--glass-border)', minWidth: '130px', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Score</div>
-              <div style={{ fontSize: '1.2rem', fontWeight: '900', color: 'var(--text-main)', position: 'relative' }}>
+              <div style={{ fontSize: '1.2rem', fontWeight: '900', color: 'var(--text-main)', position: 'relative', width: '100%', textAlign: 'center' }}>
                 <ScoreCounter targetScore={score} />
                 {scorePopups.map(popup => (
-                  <div key={popup.id} className="score-popup" style={{ position: 'absolute', left: 'calc(100% + 15px)', top: '50%', transform: 'translateY(-50%)' }}>
+                  <div key={popup.id} className="score-popup" style={{ left: 0, right: 0, top: '-20px' }}>
                     +{popup.val}
                   </div>
                 ))}

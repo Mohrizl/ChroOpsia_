@@ -1,9 +1,7 @@
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Routes, Route } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
-import { Volume2, VolumeX } from 'lucide-react';
 import { ThemeProvider } from './context/ThemeContext';
 import GlobalControls from './components/GlobalControls';
-import FriendsSidebar from './components/FriendsSidebar';
 import Login from './pages/Login';
 import SignUp from './pages/SignUp';
 import Home from './pages/Home';
@@ -18,7 +16,6 @@ import { supabase } from './lib/supabase';
 function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [session, setSession] = useState(null);
-  const [isFriendsOpen, setIsFriendsOpen] = useState(false);
   const audioRef = useRef(null);
 
   useEffect(() => {
@@ -69,11 +66,7 @@ function App() {
         isPlaying={isPlaying} 
         toggleMusic={toggleMusic} 
         session={session} 
-        openFriendsSidebar={() => setIsFriendsOpen(true)} 
-        isFriendsOpen={isFriendsOpen}
-        closeFriendsSidebar={() => setIsFriendsOpen(false)}
       />
-      <FriendsSidebar session={session} isOpen={isFriendsOpen} onClose={() => setIsFriendsOpen(false)} />
 
       <Routes>
         <Route path="/" element={<Login />} />

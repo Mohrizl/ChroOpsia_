@@ -113,7 +113,7 @@ export default function Lobby() {
     try {
       await supabase.from('rooms').insert([{ code, type, host_name: playerName.trim(), status: 'waiting', game_type: 'color-race', time_limit: 20, num_questions: 14 }]);
       await supabase.from('players').insert([{ room_code: code, name: playerName.trim(), ready: true, score: 0, current_question: 1, finished: false }]);
-      navigate('/select-mode', { state: { type, roomCode: code, playerName: playerName.trim(), isHost: true } });
+      navigate('/waiting-room', { state: { roomCode: code, playerName: playerName.trim(), isHost: true } });
     } catch (err) { setError('Failed to create room'); }
   };
 

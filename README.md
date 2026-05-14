@@ -1,15 +1,15 @@
 # ChroOpsia - Multiplayer Color Vision Game
 
-ChroOpsia adalah permainan berbasis web (Web App) yang menguji kepekaan dan kecepatan pemain terhadap pengenalan pola warna. Proyek ini mendukung fitur **Real-time Multiplayer** dan dilengkapi dengan sistem autentikasi serta sistem pertemanan (Friend System) terintegrasi.
+ChroOpsia adalah permainan berbasis web (Web App) yang menguji kepekaan dan kecepatan pemain terhadap pengenalan pola warna. Proyek ini mendukung fitur **Real-time Multiplayer** dan dilengkapi dengan sistem autentikasi serta fitur pencarian pemain terintegrasi.
 
 ## Fitur Utama
-- **Real-Time Multiplayer Room**: Pemain dapat membuat *room* privat atau publik, mengundang teman, dan bermain hingga 8 pemain sekaligus secara *realtime* menggunakan WebSockets (Supabase Realtime).
+- **Real-Time Multiplayer Room**: Pemain dapat membuat *room* privat atau publik, mengundang pemain lain, dan bermain hingga 8 pemain sekaligus secara *realtime* menggunakan WebSockets (Supabase Realtime).
 - **Mode Solo & Mode Multiplayer**: Mainkan mode Color Race atau Ishihara Test.
-- **Sistem Pertemanan (Friend System)**: Tambahkan pemain lain sebagai teman menggunakan email mereka, lihat daftar teman, dan undang mereka ke *room*. Fitur ini memvalidasi apakah pemain tersebut sudah terdaftar di aplikasi atau belum.
-- **Status Online/Offline Pengguna**: Pantau teman mana yang sedang online di dalam aplikasi melalui indikator hijau/abu-abu pada *sidebar* teman, yang otomatis sinkron dengan Supabase Presence.
+- **Pencarian Pemain Real-time (Search Player)**: Cari pemain lain yang terdaftar di sistem berdasarkan email atau nama mereka secara langsung dari dalam *Room*. Fitur ini memungkinkan Anda melihat apakah mereka sedang online atau offline.
+- **Status Online/Offline Pengguna**: Pantau status pemain lain melalui indikator warna (hijau untuk online, abu-abu untuk offline), yang otomatis sinkron menggunakan Supabase Presence secara global.
 - **Google OAuth Login**: Autentikasi aman tanpa kata sandi menggunakan akun Google, lengkap dengan opsi pendaftaran Email biasa.
 - **Chat Realtime**: Kirim pesan ke sesama pemain di *Waiting Room*.
-- **Keamanan & Efisiensi Database**: Menggunakan Row Level Security (RLS) serta fitur otomatis (Trigger) untuk mendaftarkan *profile* pemain.
+- **Keamanan & Efisiensi Database**: Menggunakan Row Level Security (RLS) serta fitur otomatis (Trigger) untuk sinkronisasi profil pemain.
 
 ---
 
@@ -96,22 +96,6 @@ $$ language plpgsql security definer;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
-
--- 5. Tabel Friends (Untuk Sistem Pertemanan)
-create table public.friends (
-  id uuid default gen_random_uuid() primary key,
-  user_id uuid references auth.users(id) on delete cascade not null,
-  friend_email text not null,
-  name text,
-  status text default 'offline',
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  unique(user_id, friend_email)
-);
-alter table public.friends enable row level security;
-create policy "Users can view their own friends" on public.friends for select using ( auth.uid() = user_id );
-create policy "Users can insert their own friends" on public.friends for insert with check ( auth.uid() = user_id );
-create policy "Users can update their own friends" on public.friends for update using ( auth.uid() = user_id );
-create policy "Users can delete their own friends" on public.friends for delete using ( auth.uid() = user_id );
 ```
 
 ### 4. Setup Google OAuth (Opsional, untuk mengubah nama domain login)

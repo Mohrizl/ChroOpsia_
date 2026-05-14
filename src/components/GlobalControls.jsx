@@ -1,27 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { Settings, Sun, Moon, Volume2, VolumeX, Users } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Settings, Sun, Moon, Volume2, VolumeX } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
-export default function GlobalControls({ isPlaying, toggleMusic, session, openFriendsSidebar, isFriendsOpen, closeFriendsSidebar }) {
+export default function GlobalControls({ isPlaying, toggleMusic }) {
   const [isOpen, setIsOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        if (isFriendsOpen) {
-          closeFriendsSidebar();
-        } else {
-          setIsOpen(prev => !prev);
-        }
+        setIsOpen(prev => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFriendsOpen, closeFriendsSidebar]);
+  }, []);
 
   return (
-    <div style={{ position: 'fixed', top: '1.5rem', right: '1.5rem', zIndex: 2000, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', opacity: isFriendsOpen ? 0 : 1, pointerEvents: isFriendsOpen ? 'none' : 'auto', transition: 'opacity 0.2s' }}>
+    <div style={{ position: 'fixed', top: '1.5rem', right: '1.5rem', zIndex: 2000, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', transition: 'opacity 0.2s' }}>
       <button 
         onClick={() => setIsOpen(!isOpen)}
         style={{
@@ -81,18 +77,6 @@ export default function GlobalControls({ isPlaying, toggleMusic, session, openFr
           {isPlaying ? <Volume2 size={20} color="var(--success)" /> : <VolumeX size={20} color="var(--danger)" />}
           {isPlaying ? 'Mute Music' : 'Play Music'}
         </button>
-
-        {session?.user && (
-          <button 
-            onClick={() => { openFriendsSidebar(); setIsOpen(false); }}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', background: 'transparent', border: 'none', color: 'var(--text-main)', cursor: 'pointer', fontSize: '0.9rem', fontWeight: '600', padding: '0.5rem', borderRadius: '8px', transition: 'background 0.2s' }}
-            onMouseOver={(e) => e.currentTarget.style.background = 'var(--input-bg)'}
-            onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
-          >
-            <Users size={20} color="var(--secondary)" />
-            Friends List
-          </button>
-        )}
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Users, Crown, CheckCircle, UserMinus, ArrowLeft, Loader2, Send, MessageCircle, Palette, Eye, UserPlus, X } from 'lucide-react';
+import { Users, Crown, CheckCircle, UserMinus, ArrowLeft, Loader2, Send, MessageCircle, Palette, Eye, UserPlus, X, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 export default function WaitingRoom() {
@@ -14,16 +14,18 @@ export default function WaitingRoom() {
   
   const isHost = room ? room.host_name === playerName : (location.state?.isHost || false);
   const [error, setError] = useState(null);
-  const [showBotMenu, setShowBotMenu] = useState(false);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [onlinePlayers, setOnlinePlayers] = useState({});
   const [showInviteModal, setShowInviteModal] = useState(false);
-  const [myFriends, setMyFriends] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [globalOnlineUsers, setGlobalOnlineUsers] = useState({});
   const chatEndRef = useRef(null);
   const channelRef = useRef(null);
 
-  const fetchRoomData = async () => {
+  const fetchRoomData = useCallback(async () => {
     if (!roomCode) {
       setError("Room code is missing. Please join through the lobby.");
       return;
@@ -47,7 +49,24 @@ export default function WaitingRoom() {
       console.error('Error fetching room data:', err);
       setError("An unexpected error occurred while connecting to the room.");
     }
-  };
+  }, [roomCode]);
+
+  // Global presence for search results
+  useEffect(() => {
+    const channel = supabase.channel('global-presence');
+    
+    channel.on('presence', { event: 'sync' }, () => {
+      const state = channel.presenceState();
+      const onlineMap = {};
+      Object.keys(state).forEach(key => {
+        onlineMap[key] = true;
+      });
+      setGlobalOnlineUsers(onlineMap);
+    });
+
+    channel.subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   useEffect(() => {
     if (!roomCode) return;
@@ -93,8 +112,6 @@ export default function WaitingRoom() {
         onlineKeys.forEach(key => { online[key] = true; });
         setOnlinePlayers(online);
 
-        // Host migration logic: if current host is not in online list
-        // We need to fetch the latest room data to be sure
         const { data: latestRoom } = await supabase.from('rooms').select('host_name').eq('code', roomCode).single();
         if (latestRoom && !online[latestRoom.host_name]) {
           const { data: currentPlayers } = await supabase.from('players').select('*').eq('room_code', roomCode).order('id', { ascending: true });
@@ -116,41 +133,41 @@ export default function WaitingRoom() {
       });
 
     return () => { supabase.removeChannel(channel); };
-  }, [roomCode, navigate, location.state, playerName]);
+  }, [roomCode, navigate, location.state, playerName, fetchRoomData]);
 
-  // Handle tab close cleanup reliably
+  // Real-time search logic
   useEffect(() => {
-    if (!roomCode || !playerName) return;
-    
-    const handleUnload = () => {
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/players?room_code=eq.${roomCode}&name=eq.${encodeURIComponent(playerName)}`;
-      fetch(url, {
-        method: 'DELETE',
-        headers: {
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-        },
-        keepalive: true
-      }).catch(() => {});
+    const searchUsers = async () => {
+      if (searchQuery.length < 2) {
+        setSearchResults([]);
+        return;
+      }
+
+      setSearchLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('players')
+          .select('id, name')
+          .ilike('name', `%${searchQuery}%`)
+          .eq('is_bot', false)
+          .limit(10);
+
+        if (!error && data) {
+          // Filter out self and duplicate names
+          const filtered = data.filter(u => u.name !== playerName);
+          const unique = Array.from(new Map(filtered.map(item => [item.name, item])).values());
+          setSearchResults(unique);
+        }
+      } catch (err) {
+        console.error('Search error:', err);
+      } finally {
+        setSearchLoading(false);
+      }
     };
 
-    window.addEventListener('beforeunload', handleUnload);
-    return () => window.removeEventListener('beforeunload', handleUnload);
-  }, [roomCode, playerName]);
-
-  // Fetch friends when modal opens
-  useEffect(() => {
-    if (showInviteModal) {
-      const fetchFriends = async () => {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          const { data } = await supabase.from('friends').select('*').eq('user_id', session.user.id);
-          setMyFriends(data || []);
-        }
-      };
-      fetchFriends();
-    }
-  }, [showInviteModal]);
+    const timer = setTimeout(searchUsers, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, playerName]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -167,11 +184,6 @@ export default function WaitingRoom() {
       id: Date.now() + Math.random() 
     };
     
-    if (!channelRef.current) {
-      console.error("Chat channel not ready");
-      return;
-    }
-
     channelRef.current.send({
       type: 'broadcast',
       event: 'chat',
@@ -188,11 +200,6 @@ export default function WaitingRoom() {
     const humans = (remainingPlayers || []).filter(p => !p.is_bot);
     
     if (humans.length === 0) { 
-      // If no humans left, delete room (or keep for 10 mins as per user request - but usually we delete if empty)
-      // User said: "buat sampai 10 menit gaada orang sama sekali baru dia akan terhapus"
-      // Implementing 10min delay is complex without a cron, so we'll just not delete it here if they just leave?
-      // Actually, if we want to follow strictly, we just don't delete here.
-      // But if there are only bots, delete directly.
       if ((remainingPlayers || []).length > 0) {
         await supabase.from('rooms').delete().eq('code', roomCode);
       }
@@ -208,7 +215,6 @@ export default function WaitingRoom() {
     const diff = difficulties[Math.floor(Math.random() * difficulties.length)];
     const botName = `Bot_${diff}_${Math.floor(Math.random() * 100)}`;
     await supabase.from('players').insert([{ room_code: roomCode, name: botName, is_bot: true, difficulty: diff, ready: true, score: 0, current_question: 1 }]);
-    setShowBotMenu(false);
   };
 
   const handleKick = async (targetName) => {
@@ -230,6 +236,29 @@ export default function WaitingRoom() {
     }).eq('room_code', roomCode);
     await supabase.from('rooms').update({ status: 'playing', game_type: selectedGameType }).eq('code', roomCode);
     navigate(`/game/${selectedGameType}`, { state: { ...location.state, gameType: selectedGameType, numQuestions: room.num_questions || 14 } });
+  };
+
+  const handleInvite = async (user) => {
+    try {
+      const channel = supabase.channel(`notif-${user.id}`);
+      await channel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.send({
+            type: 'broadcast',
+            event: 'invite',
+            payload: {
+              senderName: playerName,
+              roomCode: roomCode
+            }
+          });
+          alert(`Undangan dikirim ke ${user.name}!`);
+          supabase.removeChannel(channel);
+        }
+      });
+    } catch (err) {
+      console.error('Invite error:', err);
+      alert('Gagal mengirim undangan.');
+    }
   };
 
   if (error) return (
@@ -337,7 +366,7 @@ export default function WaitingRoom() {
               </div>
             )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-              {players.sort((a, b) => (a.name === room.host_name ? -1 : b.name === room.host_name ? 1 : 0)).map((p, idx) => (
+              {players.sort((a, b) => (a.name === room.host_name ? -1 : b.name === room.host_name ? 1 : 0)).map((p) => (
                 <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.8rem 1rem', background: p.name === playerName ? 'rgba(99, 102, 241, 0.1)' : 'transparent', borderRadius: '12px', border: p.name === playerName ? '1px solid var(--primary)' : '1px solid transparent' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', minWidth: 0 }}>
                     {p.name === room.host_name && <Crown size={18} color="#fbbf24" style={{ flexShrink: 0 }} />}
@@ -454,33 +483,54 @@ export default function WaitingRoom() {
           <div className="glass-panel" style={{ width: '90%', maxWidth: '400px', padding: '1.5rem', background: 'var(--bg-color)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h3 style={{ fontSize: '1.2rem', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><UserPlus size={20} color="var(--primary)" /> Invite Friends</h3>
-              <button onClick={() => setShowInviteModal(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={24} /></button>
+              <button onClick={() => { setShowInviteModal(false); setSearchQuery(''); setSearchResults([]); }} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={24} /></button>
             </div>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>Undang teman mu untuk bergabung dan bersaing di room ini.</p>
+            
+            <div style={{ position: 'relative', marginBottom: '1.5rem' }}>
+              <input 
+                type="text" 
+                placeholder="Search email or name..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="input-field"
+                style={{ paddingLeft: '2.8rem', fontSize: '0.9rem' }}
+              />
+              <Search size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', maxHeight: '300px', overflowY: 'auto' }}>
-              {myFriends.length === 0 ? (
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>Belum ada teman untuk diundang.</p>
+              {searchLoading ? (
+                <div style={{ textAlign: 'center', padding: '2rem' }}>
+                  <Loader2 className="animate-spin" size={30} color="var(--primary)" style={{ margin: '0 auto' }} />
+                </div>
+              ) : searchQuery.length < 2 ? (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>Type at least 2 characters to search.</p>
+              ) : searchResults.length === 0 ? (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>No users found.</p>
               ) : (
-                myFriends.map((f, i) => {
-                  const displayName = f.name || f.friend_email || f.email;
+                searchResults.map((u) => {
+                  const displayName = u.name;
                   const initial = displayName.charAt(0).toUpperCase();
-                  const isFriendOnline = f.status === 'online'; // Simplification, could use realtime online map
+                  const isOnline = globalOnlineUsers[u.id] || globalOnlineUsers[u.name];
                   
                   return (
-                    <div key={f.id || i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.8rem', background: 'var(--input-bg)', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                    <div key={u.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.8rem', background: 'var(--input-bg)', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                        <div style={{ width: '35px', height: '35px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>
-                          {initial}
+                        <div style={{ position: 'relative' }}>
+                          <div style={{ width: '35px', height: '35px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>
+                            {initial}
+                          </div>
+                          <span style={{ position: 'absolute', bottom: 0, right: 0, width: '10px', height: '10px', borderRadius: '50%', background: isOnline ? 'var(--success)' : '#94a3b8', border: '2px solid var(--bg-color)' }}></span>
                         </div>
                         <div>
-                          <p style={{ fontSize: '0.9rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '120px' }}>{displayName}</p>
-                          <p style={{ fontSize: '0.75rem', color: isFriendOnline ? 'var(--success)' : 'var(--text-muted)' }}>{isFriendOnline ? 'Online' : 'Offline'}</p>
+                          <p style={{ fontSize: '0.9rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '150px' }}>{displayName}</p>
+                          <p style={{ fontSize: '0.75rem', color: isOnline ? 'var(--success)' : 'var(--text-muted)' }}>{isOnline ? 'Online' : 'Offline'}</p>
                         </div>
                       </div>
                       <button 
                         className="btn btn-primary" 
                         style={{ padding: '0.4rem 0.8rem', width: 'auto', fontSize: '0.8rem' }} 
-                        onClick={() => { alert('Undangan terkirim!'); setShowInviteModal(false); }}
+                        onClick={() => handleInvite(u)}
                       >
                         Invite
                       </button>
