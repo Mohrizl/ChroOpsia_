@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useNavigate } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
 import { ThemeProvider } from './context/ThemeContext';
 import GlobalControls from './components/GlobalControls';
@@ -17,6 +17,7 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [session, setSession] = useState(null);
   const audioRef = useRef(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -31,6 +32,34 @@ function App() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!session?.user) return;
+
+    const inviteSubscription = supabase
+      .channel('realtime:invites')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'invites',
+          filter: `to_id=eq.${session.user.id}`
+        },
+        (payload) => {
+          const { roomCode } = payload.new;
+          const accept = window.confirm(`Ada undangan masuk ke Room: ${roomCode}. Terima?`);
+          if (accept) {
+            navigate('/waiting-room', { state: { roomCode: roomCode } });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(inviteSubscription);
+    };
+  }, [session, navigate]);
 
   const musicUrl = "/backsound.mp3";
 
@@ -62,10 +91,10 @@ function App() {
         <div className="bg-grid" />
       </div>
 
-      <GlobalControls 
-        isPlaying={isPlaying} 
-        toggleMusic={toggleMusic} 
-        session={session} 
+      <GlobalControls
+        isPlaying={isPlaying}
+        toggleMusic={toggleMusic}
+        session={session}
       />
 
       <Routes>
