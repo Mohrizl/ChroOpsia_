@@ -47,6 +47,25 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--glass-border);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
 /* Premium Dynamic Background */
 .bg-wrapper {
   position: fixed;
@@ -358,19 +377,20 @@ body {
   background: white;
 }
 
-@keyframes float-up-fade { 
-  0% { transform: translateY(0); opacity: 1; } 
-  100% { transform: translateY(-60px); opacity: 0; } 
+@keyframes float-right-fade { 
+  0% { transform: translateX(0); opacity: 1; } 
+  100% { transform: translateX(60px); opacity: 0; } 
 } 
 
 .score-popup { 
   position: absolute; 
   color: var(--success); 
   font-weight: 800; 
-  font-size: 2rem; 
+  font-size: 1rem; 
   pointer-events: none; 
-  animation: float-up-fade 1s forwards ease-out; 
-  text-shadow: 0 4px 10px rgba(0, 0, 0, 0.2); 
+  animation: float-right-fade 1.5s forwards ease-out; 
+  text-shadow: 0 1px 6px rgba(16, 185, 129, 0.3); 
   z-index: 100; 
+  white-space: nowrap;
 }
 

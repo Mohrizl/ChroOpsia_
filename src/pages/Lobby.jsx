@@ -33,11 +33,14 @@ export default function Lobby() {
       if (allRooms) {
         for (const r of allRooms) {
           const hasHumans = r.players && r.players.some(p => !p.is_bot);
-          const createdAt = r.created_at;
-          const isOld = createdAt < fiveMinsAgo;
-          
-          // Only delete if it's old AND empty, or if it's very old and still waiting
-          if (isOld && (!hasHumans || r.status === 'waiting')) {
+          const createdAt = new Date(r.created_at).getTime();
+          const isOld = Date.now() - createdAt > 5 * 60 * 1000;
+          const isSlightlyOld = Date.now() - createdAt > 30 * 1000;
+
+          // Delete if it has no humans and is more than 30 seconds old
+          if (!hasHumans && isSlightlyOld) {
+            await supabase.from('rooms').delete().eq('id', r.id);
+          } else if (isOld && r.status === 'waiting') {
             await supabase.from('rooms').delete().eq('id', r.id);
           }
         }
@@ -51,9 +54,11 @@ export default function Lobby() {
         .order('created_at', { ascending: false });
 
       if (roomsError) throw roomsError;
-      const formatted = (roomsData || []).map(r => ({
-        code: r.code, host: r.host_name, players: r.players.length, maxPlayers: 8, status: r.status
-      }));
+      const formatted = (roomsData || [])
+        .filter(r => r.players && r.players.length > 0)
+        .map(r => ({
+          code: r.code, host: r.host_name, players: r.players.length, maxPlayers: 8, status: r.status
+        }));
       setPublicRooms(formatted);
     } catch (err) {
       console.error('Error fetching rooms:', err);
@@ -127,7 +132,7 @@ export default function Lobby() {
 
       <div className="glass-panel" style={{ maxWidth: '1050px', width: '100%', position: 'relative' }}>
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => navigate('/home')}
           style={{ position: 'absolute', top: '2rem', left: '2rem', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
         >
           <ArrowLeft size={20} />

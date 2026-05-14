@@ -85,14 +85,15 @@ export default function Home() {
             <Users size={20} />
             Multiplayer Room
           </button>
-          {!isGuest && user && (
+
+          {(isGuest || user) && (
             <button 
               className="btn btn-secondary" 
               onClick={handleLogout}
               style={{ marginTop: '1rem', border: 'none', background: 'transparent', color: 'var(--danger)', gap: '0.75rem' }}
             >
               <LogOut size={20} />
-              Logout
+              {isGuest ? 'Exit Guest Session' : 'Logout'}
             </button>
           )}
         </div>

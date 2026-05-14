@@ -149,9 +149,11 @@ export default function ColorRaceGame() {
       setWaitingForOthers(true);
       await supabase.from('players').update({ finished: true, score: fs, correct_count: fcc }).eq('room_code', roomCode).eq('name', playerName);
     } else {
-      navigate('/score', { state: { score: fs, mode: 'Color Race', correctCount: fcc, ...location.state } });
+      navigate('/score', { state: { score: fs, mode: 'Color Race', correctCount: fcc, numQuestions: totalQuestions, ...location.state } });
     }
   };
+
+
 
   const handleGuess = (color) => {
     if (isProcessing || showAnswer) return;
@@ -215,9 +217,9 @@ export default function ColorRaceGame() {
     return (
       <div className="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', paddingTop: '2rem', paddingBottom: '2rem' }}>
         <div className="glass-panel" style={{ width: '100%', maxWidth: '450px', textAlign: 'center', padding: '1.5rem' }}>
-          <h2 className="title text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>Finished!</h2>
-          <p style={{ color: 'var(--primary)', fontWeight: 'bold', fontSize: '1rem', marginBottom: '1rem' }}>Waiting for other players...</p>
-          <div className="loader" style={{ margin: '0 auto 1.5rem auto', width: '30px', height: '30px' }}></div>
+          <h2 className="title text-gradient" style={{ fontSize: '2.4rem', marginBottom: '0.2rem' }}>Finished!</h2>
+          <p style={{ color: 'var(--primary)', fontSize: '1rem', fontWeight: '600', marginBottom: '1.5rem', opacity: 0.9 }}>Waiting for everyone to cross the finish line...</p>
+          <div className="loader" style={{ margin: '0 auto 2rem auto', width: '30px', height: '30px' }}></div>
           <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1rem', textAlign: 'left' }}>
             {allPlayers.map(p => (
               <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.85rem', color: p.finished ? 'var(--success)' : 'white' }}>
@@ -229,6 +231,29 @@ export default function ColorRaceGame() {
         </div>
       </div>
     );
+  }
+
+  function ScoreCounter({ targetScore }) {
+    const [displayScore, setDisplayScore] = useState(targetScore);
+    useEffect(() => {
+      let start = displayScore;
+      const end = targetScore;
+      if (start === end) return;
+      let current = start;
+      const range = end - start;
+      const duration = 800; 
+      const startTime = performance.now();
+      const animate = (now) => {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const easeProgress = 1 - Math.pow(1 - progress, 3);
+        const nextValue = Math.floor(start + range * easeProgress);
+        setDisplayScore(nextValue);
+        if (progress < 1) requestAnimationFrame(animate);
+      };
+      requestAnimationFrame(animate);
+    }, [targetScore]);
+    return <span>{displayScore}</span>;
   }
 
   return (
@@ -244,9 +269,16 @@ export default function ColorRaceGame() {
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Time</div>
               <div style={{ fontSize: '1.1rem', fontWeight: '800', color: timeLeft <= 5 ? 'var(--danger)' : 'var(--text-main)' }}>{timeLeft}s</div>
             </div>
-            <div style={{ padding: '0.9rem 1rem', borderRadius: '18px', background: 'var(--input-bg)', border: '1px solid var(--glass-border)', minWidth: '120px' }}>
+            <div style={{ padding: '0.9rem 1.2rem', borderRadius: '18px', background: 'var(--input-bg)', border: '1px solid var(--glass-border)', minWidth: '130px', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Score</div>
-              <div style={{ fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-main)' }}>{score}</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: '900', color: 'var(--text-main)', position: 'relative' }}>
+                <ScoreCounter targetScore={score} />
+                {scorePopups.map(popup => (
+                  <div key={popup.id} className="score-popup" style={{ position: 'absolute', left: 'calc(100% + 15px)', top: '50%', transform: 'translateY(-50%)' }}>
+                    +{popup.val}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
            <div style={{ marginBottom: '0.8rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
@@ -276,7 +308,7 @@ export default function ColorRaceGame() {
             <h3 style={{ marginBottom: '0.6rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Users size={16} /> Live Ranks</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.5rem' }}>
               {allPlayers.map((p, idx) => (
-                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.8rem', background: p.name === playerName ? 'var(--input-bg)' : 'var(--panel-bg)', borderRadius: '10px', border: p.name === playerName ? '1px solid var(--primary)' : '1px solid transparent', alignItems: 'center', minHeight: '40px' }}>
+                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.8rem', background: p.name === (playerName || 'You') ? 'var(--input-bg)' : 'var(--panel-bg)', borderRadius: '10px', border: p.name === (playerName || 'You') ? '1px solid var(--primary)' : '1px solid transparent', alignItems: 'center', minHeight: '40px' }}>
                   <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 'bold' }}>{idx + 1}</span>
                     <span style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-main)' }}>{p.name}</span>

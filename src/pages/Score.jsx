@@ -6,7 +6,7 @@ export default function Score() {
   const location = useLocation();
   const navigate = useNavigate();
   const { score, mode, roomCode, playerName, allPlayers, wrongCount, correctCount, numQuestions } = location.state || { score: 0, mode: 'Unknown' };
-  const total = numQuestions || 14;
+  const total = numQuestions || (mode === 'Ishihara Test' ? 14 : 14);
 
   // Use passed allPlayers or mock if missing
   const leaderboard = allPlayers || [
@@ -16,12 +16,12 @@ export default function Score() {
   const isWinner = roomCode && leaderboard[0]?.name === (playerName || 'You');
 
   const getExplanation = () => {
-    const finalWrong = wrongCount !== undefined ? wrongCount : (correctCount !== undefined ? total - correctCount : 0);
-    const finalCorrect = total - finalWrong;
+    const finalCorrect = correctCount !== undefined ? correctCount : (wrongCount !== undefined ? total - wrongCount : 0);
+    const finalWrong = total - finalCorrect;
     const accuracy = (finalCorrect / total) * 100;
 
     if (mode === 'Ishihara Test') {
-      if (finalWrong <= 1) {
+      if (finalCorrect >= total - 1) {
         return (
           <div style={{ marginTop: '1.5rem', background: 'rgba(16, 185, 129, 0.1)', padding: '1.5rem', borderRadius: '16px', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
             <div style={{ display: 'inline-block', padding: '0.5rem 1.5rem', borderRadius: '30px', background: 'var(--success)', color: 'white', fontWeight: '900', marginBottom: '1rem', fontSize: '1.2rem' }}>
@@ -31,21 +31,24 @@ export default function Score() {
               Selamat! Kamu menjawab benar <strong>{finalCorrect} dari {total}</strong> soal.
             </p>
             <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-              Hasil ini menunjukkan penglihatan warna normal, mampu membedakan kontras warna yang samar dengan tepat. Ini membuktikan persepsi visual kamu sangat tajam.
+              Hasil ini menunjukkan penglihatan warna normal. Persepsi visual kamu sangat tajam.
             </p>
           </div>
         );
       } else {
         return (
           <div style={{ marginTop: '1.5rem', background: 'rgba(239, 68, 68, 0.1)', padding: '1.5rem', borderRadius: '16px', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
-            <div style={{ display: 'inline-block', padding: '0.5rem 1.5rem', borderRadius: '30px', background: 'var(--danger)', color: 'white', fontWeight: '900', marginBottom: '1rem', fontSize: '1.2rem' }}>
-              TERINDIKASI BUTA WARNA
+            <div style={{ display: 'inline-block', padding: '0.5rem 1.5rem', borderRadius: '30px', background: 'var(--danger)', color: 'white', fontWeight: '900', marginBottom: '1rem', fontSize: '1.1rem' }}>
+              MUNGKIN KAMU BUTA WARNA
             </div>
             <p style={{ fontSize: '1.1rem', color: 'var(--text-main)', lineHeight: '1.6' }}>
               Kamu menjawab benar <strong>{finalCorrect} dari {total}</strong> soal.
             </p>
             <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-              Kesalahan {finalWrong} soal dianggap indikasi buta warna karena mata gagal mengenali pola warna dasar tersebut dengan konsisten.
+              Kesalahan {finalWrong} soal bisa jadi kamu mengalami buta warna, karena mata gagal mengenali pola warna dasar tersebut dengan konsisten.
+            </p>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+              sebaiknya kamu periksa ke dokter spesialis mata untuk melakukan pemeriksaan lebih lanjut.
             </p>
           </div>
         );
@@ -62,9 +65,12 @@ export default function Score() {
             Kamu berhasil memilih warna dengan tepat sebanyak <strong>{finalCorrect} dari {total}</strong> soal.
           </p>
           <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-            {isExcellent 
-              ? "Luar biasa! Akurasi kamu sangat tinggi dalam membedakan gradasi warna yang sangat mirip dalam waktu singkat." 
-              : "Bagus! Kamu memiliki kemampuan membedakan warna yang cukup baik. Teruslah berlatih untuk meningkatkan kecepatan dan akurasi."}
+            {isExcellent
+              ? "Luar biasa! Akurasi kamu sangat tinggi dalam membedakan gradasi warna yang sangat mirip dalam waktu singkat."
+              : (finalCorrect <= 6
+                ? "Sayang sekali, kemampuanmu belum cukup untuk membedakan warna dengan baik. Teruslah berlatih, semangat!"
+                : "Bagus! Kamu memiliki kemampuan membedakan warna yang cukup baik. Teruslah berlatih untuk meningkatkan kecepatan dan akurasi.")
+            }
           </p>
         </div>
       );
@@ -115,7 +121,7 @@ export default function Score() {
       `}</style>
 
       <div className={`glass-panel ${roomCode ? 'score-panel' : ''}`} style={!roomCode ? { maxWidth: '600px', textAlign: 'center' } : {}}>
-        
+
         {/* Main Score Info */}
         <div className={roomCode ? 'score-main' : ''}>
           <Trophy size={64} color="#fbbf24" style={{ marginBottom: '1rem', margin: '0 auto' }} />
@@ -125,11 +131,11 @@ export default function Score() {
 
           {getExplanation()}
 
-          <div style={{ 
-            fontSize: 'clamp(3rem, 15vw, 5rem)', 
-            fontWeight: '800', 
-            margin: '1.5rem 0', 
-            color: 'var(--success)', 
+          <div style={{
+            fontSize: 'clamp(3rem, 15vw, 5rem)',
+            fontWeight: '800',
+            margin: '1.5rem 0',
+            color: 'var(--success)',
             textShadow: isWinner ? '0 0 20px rgba(16, 185, 129, 0.4)' : 'none',
             lineHeight: 1
           }}>
@@ -137,9 +143,48 @@ export default function Score() {
           </div>
 
           <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button className="btn btn-primary" onClick={() => navigate('/select-mode', { state: { ...location.state, players: undefined } })} style={{ width: 'auto', minWidth: '160px' }}>
-              <RotateCcw size={20} /> Play Again
-            </button>
+            {roomCode ? (
+              <button
+                className="btn btn-primary"
+                onClick={async () => {
+                  try {
+                    const { data: roomData } = await supabase.from('rooms').select('host_name').eq('code', roomCode).single();
+                    if (!roomData) {
+                      alert("Room is no longer available.");
+                      navigate('/lobby');
+                      return;
+                    }
+                    const isHost = roomData?.host_name === playerName;
+                    if (isHost) {
+                      await supabase.from('rooms').update({ status: 'waiting' }).eq('code', roomCode);
+                    }
+                    navigate('/waiting-room', {
+                      state: {
+                        ...location.state,
+                        roomCode,
+                        playerName,
+                        isHost,
+                        gameType: mode === 'Ishihara Test' ? 'ishihara' : 'color-race'
+                      }
+                    });
+                  } catch (err) {
+                    console.error("Error going back to room:", err);
+                    navigate('/lobby');
+                  }
+                }}
+                style={{ width: 'auto', minWidth: '180px' }}
+              >
+                <RotateCcw size={20} /> Back to Room
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary"
+                onClick={() => navigate('/select-mode', { state: { ...location.state, players: undefined } })}
+                style={{ width: 'auto', minWidth: '180px' }}
+              >
+                <RotateCcw size={20} /> Play Again
+              </button>
+            )}
             <button className="btn btn-secondary" onClick={() => navigate('/home')} style={{ width: 'auto', minWidth: '160px' }}>
               <Home size={20} /> Home
             </button>
@@ -154,17 +199,17 @@ export default function Score() {
               {leaderboard.map((p, idx) => (
                 <div key={idx} style={{
                   background: p.name === (playerName || 'You') ? 'var(--input-bg)' : 'transparent',
-                  borderRadius: '12px', 
+                  borderRadius: '12px',
                   border: p.name === (playerName || 'You') ? '1px solid var(--primary)' : '1px solid transparent',
-                  padding: '0.75rem 1rem', 
-                  display: 'flex', 
+                  padding: '0.75rem 1rem',
+                  display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0 }}>
                     {idx === 0 ? <Crown size={18} color="#fbbf24" /> : <span style={{ width: '18px', textAlign: 'center', fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '0.9rem' }}>{idx + 1}</span>}
-                    <span style={{ 
-                      fontWeight: p.name === (playerName || 'You') ? '800' : '400', 
+                    <span style={{
+                      fontWeight: p.name === (playerName || 'You') ? '800' : '400',
                       color: 'var(--text-main)',
                       fontSize: '0.95rem',
                       whiteSpace: 'nowrap',

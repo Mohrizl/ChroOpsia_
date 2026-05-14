@@ -4,19 +4,34 @@ import { Timer, Star, Users, Hash, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const ISHIHARA_IMAGES = [
-  '/2.png', '/3.png', '/5.png', '/5 (14).png', '/6.png', '/6 (11).png',
-  '/7.png', '/8.png', '/12.png', '/15.png', '/26.png', '/29.png',
-  '/35.png', '/42.png', '/45.png', '/57.png', '/73.png', '/74.png',
-  '/96.png', '/97.png', '/Not (5).png', '/nothik.png', '/nothin.png',
-  '/nothing 2.png', '/nothing 45.png', '/nothing 73.png', '/nothink.png', '/noting.png',
+  '/12.png', '/15.png', '/2.png', '/26.png', '/29.png', '/3.png', '/35.png', '/42.png', '/45.png',
+  '/5 (14).png', '/5.png', '/57.png', '/6 (11).png', '/6.png', '/7.png', '/73.png', '/74.png', '/8.png',
+  '/96.png', '/97.png', '/Nothing (2).png', '/Nothing (45).png', '/Nothing (73).png', 
+  '/Nothing (a line).png', '/Nothing (line).png', '/Nothing.png', '/Purple & Red.png', '/Violet & Orange.png'
 ];
 
-const getAnswerFromFile = (file) => file.replace(/^\//, '').replace(/\.png$/i, '');
+const getAnswerFromFile = (file) => {
+  let name = file.replace(/^\//, '').replace(/\.png$/i, '');
+  name = name.replace(/\s*\([^)]*\)/, '');
+  return name.trim();
+};
 
 const buildQuestion = (file) => {
   const answer = getAnswerFromFile(file);
-  const allAnswers = Array.from(new Set(ISHIHARA_IMAGES.map(getAnswerFromFile).filter(a => a !== answer)));
-  const distractors = allAnswers.sort(() => Math.random() - 0.5).slice(0, 3);
+  
+  const numbers = ['2', '3', '5', '6', '7', '8', '12', '15', '26', '29', '35', '42', '45', '57', '73', '74', '96', '97'];
+  const words = ['Purple & Red', 'Violet & Orange', 'Green Line', 'Blue Line', 'Nothing'];
+  
+  let distractors = [];
+  const pool = answer.toLowerCase() === 'nothing' ? [...numbers, 'Purple & Red', 'Green Line'] : [...numbers, ...words];
+  
+  while (distractors.length < 3) {
+    const rand = pool[Math.floor(Math.random() * pool.length)];
+    if (rand !== answer && !distractors.includes(rand)) {
+      distractors.push(rand);
+    }
+  }
+
   return {
     image: file,
     opts: [answer, ...distractors].sort(() => Math.random() - 0.5),
@@ -180,9 +195,11 @@ export default function IshiharaGame() {
       setWaitingForOthers(true);
       await supabase.from('players').update({ finished: true, score: fs, correct_count: fcc, wrong_count: fwc }).eq('room_code', roomCode).eq('name', playerName);
     } else {
-      navigate('/score', { state: { score: fs, mode: 'Ishihara Test', wrongCount: fwc, correctCount: fcc, ...location.state } });
+      navigate('/score', { state: { score: fs, mode: 'Ishihara Test', wrongCount: fwc, correctCount: fcc, numQuestions: totalQuestions, ...location.state } });
     }
   };
+
+
 
   useEffect(() => {
     if (setupMode || waitingForOthers || isProcessing) return;
@@ -233,9 +250,9 @@ export default function IshiharaGame() {
     return (
       <div className="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', paddingTop: '2rem', paddingBottom: '2rem' }}>
         <div className="glass-panel" style={{ width: '100%', maxWidth: '450px', textAlign: 'center', padding: '1.5rem' }}>
-          <h2 className="title text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>Finished!</h2>
-          <p style={{ color: 'var(--primary)', fontWeight: 'bold', fontSize: '1rem', marginBottom: '1rem' }}>Waiting for other players...</p>
-          <div className="loader" style={{ margin: '0 auto 1.5rem auto', width: '30px', height: '30px' }}></div>
+          <h2 className="title text-gradient" style={{ fontSize: '2.4rem', marginBottom: '0.2rem' }}>Finished!</h2>
+          <p style={{ color: 'var(--primary)', fontSize: '1rem', fontWeight: '600', marginBottom: '1.5rem', opacity: 0.9 }}>Waiting for everyone to cross the finish line...</p>
+          <div className="loader" style={{ margin: '0 auto 2rem auto', width: '30px', height: '30px' }}></div>
           <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1rem', textAlign: 'left' }}>
             {allPlayers.map(p => (
               <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.85rem', color: p.finished ? 'var(--success)' : 'white' }}>
@@ -247,6 +264,29 @@ export default function IshiharaGame() {
         </div>
       </div>
     );
+  }
+
+  function ScoreCounter({ targetScore }) {
+    const [displayScore, setDisplayScore] = useState(targetScore);
+    useEffect(() => {
+      let start = displayScore;
+      const end = targetScore;
+      if (start === end) return;
+      let current = start;
+      const range = end - start;
+      const duration = 800; 
+      const startTime = performance.now();
+      const animate = (now) => {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const easeProgress = 1 - Math.pow(1 - progress, 3);
+        const nextValue = Math.floor(start + range * easeProgress);
+        setDisplayScore(nextValue);
+        if (progress < 1) requestAnimationFrame(animate);
+      };
+      requestAnimationFrame(animate);
+    }, [targetScore]);
+    return <span>{displayScore}</span>;
   }
 
   const q = questions[currentQ];
@@ -265,9 +305,16 @@ export default function IshiharaGame() {
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Time</div>
               <div style={{ fontSize: '1.1rem', fontWeight: '800', color: timeLeft <= 5 ? 'var(--danger)' : 'var(--text-main)' }}>{timeLeft}s</div>
             </div>
-            <div style={{ padding: '0.9rem 1rem', borderRadius: '18px', background: 'var(--input-bg)', border: '1px solid var(--glass-border)', minWidth: '120px' }}>
+            <div style={{ padding: '0.9rem 1.2rem', borderRadius: '18px', background: 'var(--input-bg)', border: '1px solid var(--glass-border)', minWidth: '130px', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Score</div>
-              <div style={{ fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-main)' }}>{score}</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: '900', color: 'var(--text-main)', position: 'relative' }}>
+                <ScoreCounter targetScore={score} />
+                {scorePopups.map(popup => (
+                  <div key={popup.id} className="score-popup" style={{ position: 'absolute', left: 'calc(100% + 15px)', top: '50%', transform: 'translateY(-50%)' }}>
+                    +{popup.val}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
           <div style={{ background: 'var(--glass-bg)', padding: '0.8rem', borderRadius: '20px', marginBottom: '0.8rem', display: 'inline-block', alignSelf: 'center' }}>
@@ -299,12 +346,7 @@ export default function IshiharaGame() {
             <h3 style={{ marginBottom: '0.6rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Users size={16} /> Live Ranks</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.5rem' }}>
               {allPlayers.map((p, idx) => (
-                <div key={p.id} style={{
-                  display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.8rem',
-                  background: p.name === playerName ? 'var(--input-bg)' : 'var(--panel-bg)',
-                  borderRadius: '10px', border: p.name === playerName ? '1px solid var(--primary)' : '1px solid transparent',
-                  alignItems: 'center', minHeight: '40px'
-                }}>
+                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.8rem', background: p.name === (playerName || 'You') ? 'var(--input-bg)' : 'var(--panel-bg)', borderRadius: '10px', border: p.name === (playerName || 'You') ? '1px solid var(--primary)' : '1px solid transparent', alignItems: 'center', minHeight: '40px' }}>
                   <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 'bold' }}>{idx + 1}</span>
                     <span style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-main)' }}>{p.name}</span>
