@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { Mail, Lock, User, Loader2, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
 export default function SignUp() {
+  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -23,9 +24,14 @@ export default function SignUp() {
       return;
     }
     try {
+      const name =
+        displayName.trim() || (email.includes('@') ? email.split('@')[0] : 'Player');
       const { data, error } = await supabase.auth.signUp({
         email,
-        password
+        password,
+        options: {
+          data: { full_name: name },
+        },
       });
       if (error) throw error;
       
@@ -65,6 +71,21 @@ export default function SignUp() {
         )}
 
         <form onSubmit={handleSignUp}>
+          <div className="input-group">
+            <label>Display Name</label>
+            <div style={{ position: 'relative' }}>
+              <User size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                className="input-field"
+                placeholder="e.g. ilham12"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                style={{ paddingLeft: '3rem' }}
+              />
+            </div>
+          </div>
+
           <div className="input-group">
             <label>Email Address</label>
             <div style={{ position: 'relative' }}>

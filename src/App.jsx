@@ -1,5 +1,5 @@
 import { Routes, Route, useNavigate } from 'react-router-dom';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { ThemeProvider } from './context/ThemeContext';
 import GlobalControls from './components/GlobalControls';
 import Login from './pages/Login';
@@ -12,12 +12,19 @@ import IshiharaGame from './pages/IshiharaGame';
 import Score from './pages/Score';
 import WaitingRoom from './pages/WaitingRoom';
 import { supabase } from './lib/supabase';
+import { ensureUserProfile } from './lib/profileSync';
+import { startGlobalPresence, stopGlobalPresence } from './lib/presence';
+import { subscribeToIncomingInvites } from './lib/invites';
 
 function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [session, setSession] = useState(null);
+  const [incomingInvite, setIncomingInvite] = useState(null);
   const audioRef = useRef(null);
+  const lastInviteKeyRef = useRef(null);
   const navigate = useNavigate();
+
+  const dismissInvite = useCallback(() => setIncomingInvite(null), []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -35,31 +42,27 @@ function App() {
 
   useEffect(() => {
     if (!session?.user) return;
+    ensureUserProfile(session);
+  }, [session]);
 
-    const inviteSubscription = supabase
-      .channel('realtime:invites')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'invites',
-          filter: `to_id=eq.${session.user.id}`
-        },
-        (payload) => {
-          const { roomCode } = payload.new;
-          const accept = window.confirm(`Ada undangan masuk ke Room: ${roomCode}. Terima?`);
-          if (accept) {
-            navigate('/waiting-room', { state: { roomCode: roomCode } });
-          }
-        }
-      )
-      .subscribe();
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    return subscribeToIncomingInvites(session.user.id, (invite) => {
+      const key = `${invite.inviteId || ''}:${invite.roomCode}:${invite.fromId}`;
+      if (lastInviteKeyRef.current === key) return;
+      lastInviteKeyRef.current = key;
+      setIncomingInvite(invite);
+      setTimeout(() => {
+        if (lastInviteKeyRef.current === key) lastInviteKeyRef.current = null;
+      }, 8000);
+    });
+  }, [session?.user?.id]);
 
-    return () => {
-      supabase.removeChannel(inviteSubscription);
-    };
-  }, [session, navigate]);
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    startGlobalPresence(session.user.id);
+    return () => stopGlobalPresence();
+  }, [session?.user?.id]);
 
   const musicUrl = "/backsound.mp3";
 
@@ -84,12 +87,102 @@ function App() {
     setIsPlaying(!isPlaying);
   };
 
+  const acceptIncomingInvite = () => {
+    if (!incomingInvite?.roomCode || !session?.user) return;
+    const displayName =
+      session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Player';
+    navigate('/waiting-room', {
+      state: {
+        roomCode: incomingInvite.roomCode,
+        playerName: displayName,
+        isHost: false,
+      },
+    });
+    setIncomingInvite(null);
+  };
+
   return (
     <ThemeProvider>
       <div className="bg-wrapper">
         <div className="bg-gradient" />
         <div className="bg-grid" />
       </div>
+
+      {incomingInvite && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="invite-dialog-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '1rem',
+            background: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(8px)',
+          }}
+        >
+          <div
+            className="glass-panel"
+            style={{
+              width: '100%',
+              maxWidth: '420px',
+              padding: '1.75rem',
+              borderRadius: '20px',
+              border: '1px solid var(--glass-border)',
+              boxShadow: '0 24px 48px rgba(0,0,0,0.35)',
+            }}
+          >
+            <h2
+              id="invite-dialog-title"
+              style={{
+                fontSize: '1.35rem',
+                fontWeight: 800,
+                marginBottom: '0.5rem',
+                color: 'var(--text-main)',
+              }}
+            >
+              Undangan permainan
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', lineHeight: 1.5, marginBottom: '0.75rem' }}>
+              {incomingInvite.senderName
+                ? `${incomingInvite.senderName} mengundangmu ke ruang multiplayer.`
+                : 'Kamu diundang bergabung ke ruang multiplayer.'}
+            </p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              Room code:
+            </p>
+            <div
+              style={{
+                fontFamily: 'ui-monospace, monospace',
+                fontSize: '1.25rem',
+                fontWeight: 700,
+                letterSpacing: '0.06em',
+                padding: '0.85rem 1rem',
+                borderRadius: '12px',
+                background: 'var(--input-bg)',
+                border: '1px solid var(--glass-border)',
+                color: 'var(--primary)',
+                textAlign: 'center',
+                marginBottom: '1.5rem',
+              }}
+            >
+              {incomingInvite.roomCode}
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-primary" style={{ flex: 1, minWidth: '120px' }} onClick={acceptIncomingInvite}>
+                Terima & masuk ruang
+              </button>
+              <button type="button" className="btn btn-secondary" style={{ flex: 1, minWidth: '120px' }} onClick={dismissInvite}>
+                Tolak
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <GlobalControls
         isPlaying={isPlaying}

@@ -1,40 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { Search, UserPlus, X, Send, Loader2 } from 'lucide-react';
+import { Search, UserPlus, X, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { searchProfiles } from '../lib/profileSync';
+import { sendGameInvite } from '../lib/invites';
+import { useOnlineUsers } from '../hooks/useOnlineUsers';
 import { useLocation } from 'react-router-dom';
 
-export default function UserSearchSidebar({ session, isOpen, onClose }) {
+export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: roomCodeProp }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [onlineUsers, setOnlineUsers] = useState({});
+  const [inviteToast, setInviteToast] = useState(null);
+  const onlineUsers = useOnlineUsers(isOpen);
+  const [searchError, setSearchError] = useState(null);
   const location = useLocation();
 
-  // Get roomCode from location state if we are in WaitingRoom
-  const roomCode = location.state?.roomCode;
-  const playerName = session?.user?.user_metadata?.full_name || session?.user?.email?.split('@')[0] || 'Player';
+  const roomCode =
+    roomCodeProp ?? location.state?.roomCode ?? location.state?.room_code ?? undefined;
 
-  // Listen to global presence
+  const playerName =
+    session?.user?.user_metadata?.full_name || session?.user?.email?.split('@')[0] || 'Player';
+
   useEffect(() => {
-    if (!session?.user) return;
-
-    const channel = supabase.channel('global-presence');
-
-    channel.on('presence', { event: 'sync' }, () => {
-      const state = channel.presenceState();
-      const onlineMap = {};
-      Object.keys(state).forEach(key => {
-        onlineMap[key] = true;
-      });
-      setOnlineUsers(onlineMap);
-    });
-
-    channel.subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [session?.user]);
+    if (!inviteToast) return;
+    const t = setTimeout(() => setInviteToast(null), 3200);
+    return () => clearTimeout(t);
+  }, [inviteToast]);
 
   // Real-time search
   useEffect(() => {
@@ -45,15 +36,18 @@ export default function UserSearchSidebar({ session, isOpen, onClose }) {
       }
 
       setLoading(true);
-      const { data, error } = await supabase
-        .from('players')
-        .select('id, name')
-        .ilike('name', `%${searchQuery}%`) // Gunakan ilike langsung pada kolom name
-        .limit(10);
-
-      if (!error && data) {
-        // Pastikan session.user.id ada sebelum filter
-        setResults(data.filter(u => u.id !== session?.user?.id));
+      setSearchError(null);
+      const { data, error } = await searchProfiles(searchQuery, session?.user?.id);
+      if (error) {
+        const msg = error.message || '';
+        setSearchError(
+          msg.includes('profiles') || error.code === '42P01'
+            ? 'Tabel profiles belum ada di Supabase. Jalankan supabase/setup_profiles_and_invites.sql'
+            : msg
+        );
+        setResults([]);
+      } else {
+        setResults(data.map((u) => ({ id: u.id, name: u.name })));
       }
       setLoading(false);
     };
@@ -62,38 +56,62 @@ export default function UserSearchSidebar({ session, isOpen, onClose }) {
     return () => clearTimeout(timer);
   }, [searchQuery, session?.user?.id]);
 
-  const handleInvite = async (user) => {
+  const handleInvite = async (targetUser) => {
     if (!roomCode) {
-      alert('Anda harus berada di dalam Room untuk mengundang pemain!');
+      setInviteToast({ type: 'error', message: 'Room code belum tersedia. Masuk waiting room dulu.' });
       return;
     }
 
-    try {
-      const channel = supabase.channel(`notif-${user.id}`);
-      await channel.subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.send({
-            type: 'broadcast',
-            event: 'invite',
-            payload: {
-              senderName: playerName,
-              roomCode: roomCode
-            }
-          });
-          alert(`Undangan dikirim ke ${user.full_name || user.email}!`);
-          supabase.removeChannel(channel);
-        }
+    const result = await sendGameInvite({
+      fromId: session.user.id,
+      toId: targetUser.id,
+      roomCode,
+      senderName: playerName,
+    });
+
+    if (!result.ok) {
+      setInviteToast({
+        type: 'error',
+        message: result.error?.message || 'Gagal menyimpan undangan ke database.',
       });
-    } catch (err) {
-      console.error('Invite error:', err);
-      alert('Gagal mengirim undangan.');
+      return;
     }
+
+    setInviteToast({ type: 'success', message: `Undangan terkirim ke ${targetUser.name}.` });
   };
 
   if (!session?.user) return null;
 
   return (
     <>
+      {inviteToast && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: '1.25rem',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 10050,
+            maxWidth: 'min(92vw, 380px)',
+            padding: '0.85rem 1.1rem',
+            borderRadius: '14px',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
+            border:
+              inviteToast.type === 'success'
+                ? '1px solid rgba(34, 197, 94, 0.45)'
+                : '1px solid rgba(239, 68, 68, 0.45)',
+            background:
+              inviteToast.type === 'success' ? 'rgba(22, 163, 74, 0.18)' : 'rgba(239, 68, 68, 0.14)',
+            color: inviteToast.type === 'success' ? 'var(--success)' : 'var(--danger)',
+          }}
+        >
+          {inviteToast.message}
+        </div>
+      )}
+
       {/* Sidebar Overlay */}
       {isOpen && (
         <div
@@ -104,7 +122,7 @@ export default function UserSearchSidebar({ session, isOpen, onClose }) {
             width: '100vw',
             height: '100vh',
             background: 'rgba(0,0,0,0.5)',
-            zIndex: 1001
+            zIndex: 1001,
           }}
           onClick={onClose}
         />
@@ -125,14 +143,38 @@ export default function UserSearchSidebar({ session, isOpen, onClose }) {
           zIndex: 1002,
           display: 'flex',
           flexDirection: 'column',
-          borderLeft: '1px solid var(--glass-border)'
+          borderLeft: '1px solid var(--glass-border)',
         }}
       >
-        <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--glass-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div
+          style={{
+            padding: '1.5rem',
+            borderBottom: '1px solid var(--glass-border)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <h2
+            style={{
+              fontSize: '1.2rem',
+              fontWeight: '800',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+            }}
+          >
             <Search size={20} color="var(--primary)" /> Search Users
           </h2>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+            }}
+          >
             <X size={24} />
           </button>
         </div>
@@ -145,9 +187,26 @@ export default function UserSearchSidebar({ session, isOpen, onClose }) {
                 placeholder="Cari email atau nama..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                style={{ width: '100%', padding: '0.8rem 1rem 0.8rem 2.5rem', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-main)', fontSize: '0.85rem' }}
+                style={{
+                  width: '100%',
+                  padding: '0.8rem 1rem 0.8rem 2.5rem',
+                  borderRadius: '12px',
+                  border: '1px solid var(--glass-border)',
+                  background: 'var(--input-bg)',
+                  color: 'var(--text-main)',
+                  fontSize: '0.85rem',
+                }}
               />
-              <Search size={18} style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <Search
+                size={18}
+                style={{
+                  position: 'absolute',
+                  left: '0.8rem',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--text-muted)',
+                }}
+              />
             </div>
           </div>
 
@@ -162,15 +221,30 @@ export default function UserSearchSidebar({ session, isOpen, onClose }) {
               </div>
             )}
 
-            {!loading && searchQuery.length >= 2 && results.length === 0 && (
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '1rem' }}>Tidak ada pengguna ditemukan.</p>
+            {!loading && searchError && (
+              <p style={{ fontSize: '0.85rem', color: 'var(--danger)', textAlign: 'center', marginTop: '1rem' }}>
+                {searchError}
+              </p>
+            )}
+
+            {!loading && !searchError && searchQuery.length >= 2 && results.length === 0 && (
+              <p
+                style={{
+                  fontSize: '0.85rem',
+                  color: 'var(--text-muted)',
+                  textAlign: 'center',
+                  marginTop: '1rem',
+                }}
+              >
+                Tidak ada akun ditemukan. Pastikan tabel profiles ada di Supabase.
+              </p>
             )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
               {results.map((u) => {
                 const displayName = u.name || 'Unknown Player';
                 const initial = displayName.charAt(0).toUpperCase();
-                const isOnline = onlineUsers[u.id];
+                const isOnline = Boolean(onlineUsers[u.id]);
 
                 return (
                   <div
@@ -182,74 +256,86 @@ export default function UserSearchSidebar({ session, isOpen, onClose }) {
                       padding: '0.8rem',
                       background: 'var(--input-bg)',
                       borderRadius: '12px',
-                      border: '1px solid var(--glass-border)'
+                      border: '1px solid var(--glass-border)',
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                       <div style={{ position: 'relative' }}>
-                        {/* Avatar Bulat */}
-                        <div style={{
-                          width: '35px',
-                          height: '35px',
-                          borderRadius: '50%',
-                          background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: 'white',
-                          fontWeight: 'bold',
-                          fontSize: '1rem'
-                        }}>
+                        <div
+                          style={{
+                            width: '35px',
+                            height: '35px',
+                            borderRadius: '50%',
+                            background:
+                              'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'white',
+                            fontWeight: 'bold',
+                            fontSize: '1rem',
+                          }}
+                        >
                           {initial}
                         </div>
-                        {/* Indikator Online/Offline */}
-                        <span style={{
-                          position: 'absolute',
-                          bottom: 0,
-                          right: 0,
-                          width: '10px',
-                          height: '10px',
-                          borderRadius: '50%',
-                          background: isOnline ? 'var(--success)' : '#94a3b8',
-                          border: '2px solid var(--bg-color)'
-                        }}></span>
+                        <span
+                          style={{
+                            position: 'absolute',
+                            bottom: 0,
+                            right: 0,
+                            width: '10px',
+                            height: '10px',
+                            borderRadius: '50%',
+                            background: isOnline ? 'var(--success)' : '#94a3b8',
+                            border: '2px solid var(--bg-color)',
+                          }}
+                        />
                       </div>
 
                       <div>
-                        {/* Nama Player dari kolom 'name' */}
-                        <p style={{
-                          fontSize: '0.9rem',
-                          fontWeight: 'bold',
-                          color: 'var(--text-main)',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          maxWidth: '140px'
-                        }}>
+                        <p
+                          style={{
+                            fontSize: '0.9rem',
+                            fontWeight: 'bold',
+                            color: 'var(--text-main)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            maxWidth: '140px',
+                          }}
+                        >
                           {displayName}
                         </p>
-                        <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                        <p
+                          style={{
+                            fontSize: '0.7rem',
+                            color: isOnline ? 'var(--success)' : 'var(--text-muted)',
+                            fontWeight: isOnline ? 700 : 500,
+                          }}
+                        >
                           {isOnline ? 'Online' : 'Offline'}
                         </p>
                       </div>
                     </div>
 
-                    {/* Button Invite muncul jika roomCode tersedia */}
                     {roomCode && (
                       <button
-                        onClick={() => handleInvite(u)}
+                        type="button"
+                        onClick={() => isOnline && handleInvite(u)}
+                        disabled={!isOnline}
                         style={{
-                          background: 'var(--primary-glow)',
+                          background: isOnline ? 'var(--primary-glow)' : 'rgba(148, 163, 184, 0.2)',
                           border: 'none',
-                          color: 'var(--primary)',
-                          padding: '0.5rem',
+                          color: isOnline ? 'var(--primary)' : 'var(--text-muted)',
+                          padding: '0.5rem 0.65rem',
                           borderRadius: '8px',
-                          cursor: 'pointer',
+                          cursor: isOnline ? 'pointer' : 'not-allowed',
                           display: 'flex',
                           alignItems: 'center',
-                          justifyContent: 'center'
+                          justifyContent: 'center',
+                          opacity: isOnline ? 1 : 0.65,
                         }}
-                        title="Undang ke Room"
+                        title={isOnline ? 'Undang ke room' : 'Pemain sedang offline'}
                       >
                         <UserPlus size={16} />
                       </button>
@@ -261,7 +347,13 @@ export default function UserSearchSidebar({ session, isOpen, onClose }) {
           </div>
         </div>
 
-        <div style={{ padding: '1rem', borderTop: '1px solid var(--glass-border)', background: 'rgba(99, 102, 241, 0.05)' }}>
+        <div
+          style={{
+            padding: '1rem',
+            borderTop: '1px solid var(--glass-border)',
+            background: 'rgba(99, 102, 241, 0.05)',
+          }}
+        >
           <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
             {roomCode ? `Anda sedang di Room: ${roomCode}` : 'Masuk ke Room untuk mengundang pemain.'}
           </p>

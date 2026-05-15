@@ -2,6 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Users, Crown, CheckCircle, UserMinus, ArrowLeft, Loader2, Send, MessageCircle, Palette, Eye, UserPlus, X, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { searchProfiles } from '../lib/profileSync';
+import { sendGameInvite } from '../lib/invites';
+import { useOnlineUsers } from '../hooks/useOnlineUsers';
 
 export default function WaitingRoom() {
   const navigate = useNavigate();
@@ -21,7 +24,10 @@ export default function WaitingRoom() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [globalOnlineUsers, setGlobalOnlineUsers] = useState({});
+  const [authSession, setAuthSession] = useState(null);
+  const globalOnlineUsers = useOnlineUsers(showInviteModal);
+  const [inviteToast, setInviteToast] = useState(null);
+  const [searchError, setSearchError] = useState(null);
   const chatEndRef = useRef(null);
   const channelRef = useRef(null);
 
@@ -51,22 +57,19 @@ export default function WaitingRoom() {
     }
   }, [roomCode]);
 
-  // Global presence for search results
   useEffect(() => {
-    const channel = supabase.channel('global-presence');
-    
-    channel.on('presence', { event: 'sync' }, () => {
-      const state = channel.presenceState();
-      const onlineMap = {};
-      Object.keys(state).forEach(key => {
-        onlineMap[key] = true;
-      });
-      setGlobalOnlineUsers(onlineMap);
-    });
-
-    channel.subscribe();
-    return () => { supabase.removeChannel(channel); };
+    supabase.auth.getSession().then(({ data: { session } }) => setAuthSession(session));
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_e, session) => setAuthSession(session));
+    return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!inviteToast) return;
+    const t = setTimeout(() => setInviteToast(null), 3200);
+    return () => clearTimeout(t);
+  }, [inviteToast]);
 
   useEffect(() => {
     if (!roomCode) return;
@@ -144,22 +147,24 @@ export default function WaitingRoom() {
       }
 
       setSearchLoading(true);
+      setSearchError(null);
       try {
-        const { data, error } = await supabase
-          .from('players')
-          .select('id, name')
-          .ilike('name', `%${searchQuery}%`)
-          .eq('is_bot', false)
-          .limit(10);
-
-        if (!error && data) {
-          // Filter out self and duplicate names
-          const filtered = data.filter(u => u.name !== playerName);
-          const unique = Array.from(new Map(filtered.map(item => [item.name, item])).values());
-          setSearchResults(unique);
+        const { data, error } = await searchProfiles(searchQuery, authSession?.user?.id);
+        if (error) {
+          console.error('Search error:', error);
+          const msg = error.message || '';
+          setSearchError(
+            msg.includes('profiles') || error.code === '42P01'
+              ? 'Tabel profiles belum ada di Supabase. Jalankan supabase/setup_profiles_and_invites.sql'
+              : msg
+          );
+          setSearchResults([]);
+        } else {
+          setSearchResults(data);
         }
       } catch (err) {
         console.error('Search error:', err);
+        setSearchError('Gagal mencari pengguna.');
       } finally {
         setSearchLoading(false);
       }
@@ -167,7 +172,7 @@ export default function WaitingRoom() {
 
     const timer = setTimeout(searchUsers, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery, playerName]);
+  }, [searchQuery, authSession?.user?.id]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -239,26 +244,34 @@ export default function WaitingRoom() {
   };
 
   const handleInvite = async (user) => {
-    try {
-      const channel = supabase.channel(`notif-${user.id}`);
-      await channel.subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.send({
-            type: 'broadcast',
-            event: 'invite',
-            payload: {
-              senderName: playerName,
-              roomCode: roomCode
-            }
-          });
-          alert(`Undangan dikirim ke ${user.name}!`);
-          supabase.removeChannel(channel);
-        }
-      });
-    } catch (err) {
-      console.error('Invite error:', err);
-      alert('Gagal mengirim undangan.');
+    if (!roomCode) {
+      setInviteToast({ type: 'error', message: 'Room code tidak tersedia.' });
+      return;
     }
+    const { data: liveSession } = await supabase.auth.getSession();
+    const fromId = liveSession?.session?.user?.id || authSession?.user?.id;
+    if (!fromId) {
+      setInviteToast({ type: 'error', message: 'Login dulu untuk mengirim undangan (bukan guest).' });
+      return;
+    }
+    const result = await sendGameInvite({
+      fromId,
+      toId: user.id,
+      roomCode,
+      senderName: playerName,
+    });
+    if (!result.ok) {
+      const msg = result.error?.message || 'Gagal menyimpan undangan.';
+      setInviteToast({
+        type: 'error',
+        message: `${msg} (cek policy INSERT invites: from_id = auth.uid())`,
+      });
+      return;
+    }
+    setInviteToast({
+      type: 'success',
+      message: `Undangan terkirim ke ${user.name}. ID: ${result.data?.id?.slice(0, 8)}…`,
+    });
   };
 
   if (error) return (
@@ -316,6 +329,34 @@ export default function WaitingRoom() {
         @media (max-width: 1000px) { .waiting-grid { grid-template-columns: 1fr; } .chat-panel { height: 400px; } }
         @media (max-width: 768px) { .waiting-panel { padding: 4rem 1.2rem 2rem; } .waiting-title { font-size: 2rem !important; } .back-btn-wr { top: 1rem !important; left: 1rem !important; } }
       `}</style>
+
+      {inviteToast && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: '1.25rem',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 10050,
+            maxWidth: 'min(92vw, 380px)',
+            padding: '0.85rem 1.1rem',
+            borderRadius: '14px',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
+            border:
+              inviteToast.type === 'success'
+                ? '1px solid rgba(34, 197, 94, 0.45)'
+                : '1px solid rgba(239, 68, 68, 0.45)',
+            background:
+              inviteToast.type === 'success' ? 'rgba(22, 163, 74, 0.18)' : 'rgba(239, 68, 68, 0.14)',
+            color: inviteToast.type === 'success' ? 'var(--success)' : 'var(--danger)',
+          }}
+        >
+          {inviteToast.message}
+        </div>
+      )}
 
       <div className="waiting-grid">
         <div className="glass-panel waiting-panel">
@@ -505,13 +546,15 @@ export default function WaitingRoom() {
                 </div>
               ) : searchQuery.length < 2 ? (
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>Type at least 2 characters to search.</p>
+              ) : searchError ? (
+                <p style={{ fontSize: '0.85rem', color: 'var(--danger)', textAlign: 'center', padding: '1rem' }}>{searchError}</p>
               ) : searchResults.length === 0 ? (
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>No users found.</p>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>Tidak ada akun ditemukan. Pastikan tabel profiles sudah dibuat dan user sudah login minimal sekali.</p>
               ) : (
                 searchResults.map((u) => {
                   const displayName = u.name;
                   const initial = displayName.charAt(0).toUpperCase();
-                  const isOnline = globalOnlineUsers[u.id] || globalOnlineUsers[u.name];
+                  const isOnline = Boolean(globalOnlineUsers[u.id]);
                   
                   return (
                     <div key={u.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.8rem', background: 'var(--input-bg)', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
@@ -524,13 +567,24 @@ export default function WaitingRoom() {
                         </div>
                         <div>
                           <p style={{ fontSize: '0.9rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '150px' }}>{displayName}</p>
-                          <p style={{ fontSize: '0.75rem', color: isOnline ? 'var(--success)' : 'var(--text-muted)' }}>{isOnline ? 'Online' : 'Offline'}</p>
+                          <p style={{ fontSize: '0.75rem', color: isOnline ? 'var(--success)' : 'var(--text-muted)', fontWeight: isOnline ? 700 : 500 }}>{isOnline ? 'Online' : 'Offline'}</p>
                         </div>
                       </div>
                       <button 
+                        type="button"
                         className="btn btn-primary" 
-                        style={{ padding: '0.4rem 0.8rem', width: 'auto', fontSize: '0.8rem' }} 
-                        onClick={() => handleInvite(u)}
+                        style={{ 
+                          padding: '0.4rem 0.8rem', 
+                          width: 'auto', 
+                          fontSize: '0.8rem',
+                          opacity: isOnline ? 1 : 0.55,
+                          cursor: isOnline ? 'pointer' : 'not-allowed',
+                          background: isOnline ? undefined : '#94a3b8',
+                          boxShadow: isOnline ? undefined : 'none',
+                        }} 
+                        disabled={!isOnline}
+                        title={isOnline ? 'Kirim undangan' : 'Pemain offline — tidak bisa diundang'}
+                        onClick={() => isOnline && handleInvite(u)}
                       >
                         Invite
                       </button>
