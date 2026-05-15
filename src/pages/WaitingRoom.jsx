@@ -10,17 +10,20 @@ import {
   setCurrentRoomCode,
   isUserInRoom,
   getRoomMemberAuthIds,
+  getSessionPlayerName,
+  getUsersActiveGames
 } from '../lib/roomJoin';
 
 export default function WaitingRoom() {
   const navigate = useNavigate();
   const location = useLocation();
   const { roomCode, playerName: passedPlayerName, gameType: initialGameType } = location.state || {};
-  const playerName = passedPlayerName || localStorage.getItem('guestName') || 'Player';
-  
+
   const [players, setPlayers] = useState([]);
   const [room, setRoom] = useState(null);
-  
+  const [session, setSession] = useState(null);
+  const [playerName, setPlayerName] = useState(passedPlayerName || 'Player');
+
   const isHost = room ? room.host_name === playerName : (location.state?.isHost || false);
   const [error, setError] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -30,7 +33,6 @@ export default function WaitingRoom() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [authSession, setAuthSession] = useState(null);
   const globalOnlineUsers = useOnlineUsers(showInviteModal);
   const [inviteToast, setInviteToast] = useState(null);
   const [searchError, setSearchError] = useState(null);
@@ -44,14 +46,24 @@ export default function WaitingRoom() {
       return;
     }
     try {
-      const { data: roomData, error: roomError } = await supabase.from('rooms').select('*').eq('code', roomCode).single();
+      const { data: roomData, error: roomError } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('code', roomCode)
+        .single();
+
       if (roomError) {
         console.error('Room fetch error:', roomError);
         setError("Room not found. It may have been deleted or expired.");
         return;
       }
       setRoom(roomData);
-      const { data: playersData, error: playersError } = await supabase.from('players').select('*').eq('room_code', roomCode);
+
+      const { data: playersData, error: playersError } = await supabase
+        .from('players')
+        .select('*')
+        .eq('room_code', roomCode);
+
       if (playersError) {
         console.error('Players fetch error:', playersError);
         return;
@@ -65,10 +77,22 @@ export default function WaitingRoom() {
   }, [roomCode]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setAuthSession(session));
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_e, session) => setAuthSession(session));
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
+      if (s) {
+        const n = getSessionPlayerName(s);
+        setPlayerName(n);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
+      setSession(s);
+      if (s) {
+        const n = getSessionPlayerName(s);
+        setPlayerName(n);
+      }
+    });
+
     return () => subscription.unsubscribe();
   }, []);
 
@@ -98,9 +122,9 @@ export default function WaitingRoom() {
     fetchRoomData();
 
     const channel = supabase.channel(`chat-${roomCode}`, {
-      config: { 
+      config: {
         presence: { key: playerName },
-        broadcast: { self: false } 
+        broadcast: { self: false }
       }
     });
 
@@ -111,15 +135,25 @@ export default function WaitingRoom() {
         const newRoom = payload.new;
         setRoom(newRoom);
         if (newRoom.status === 'playing') {
-          navigate(`/game/${newRoom.game_type}`, { state: { ...location.state, gameType: newRoom.game_type } });
+          navigate(`/game/${newRoom.game_type}`, {
+            state: { ...location.state, gameType: newRoom.game_type, playerName: playerName }
+          });
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, (payload) => {
-        fetchRoomData();
-        if (payload.eventType === 'DELETE' && payload.old.name === playerName) {
-          alert("You have been kicked.");
-          navigate('/lobby');
+        if (payload.eventType === 'DELETE') {
+          const oldP = payload.old;
+          const targetPlayerBeforeDelete = players.find(p => p.id === oldP.id);
+          const isMe = targetPlayerBeforeDelete && targetPlayerBeforeDelete.name === playerName;
+
+          if (isMe) {
+            sessionStorage.removeItem('chro_current_room');
+            alert("You have been kicked.");
+            navigate('/lobby', { replace: true });
+            return;
+          }
         }
+        fetchRoomData();
       })
       .on('broadcast', { event: 'chat' }, (payload) => {
         if (payload.payload && payload.payload.sender !== playerName) {
@@ -137,14 +171,15 @@ export default function WaitingRoom() {
         onlineKeys.forEach(key => { online[key] = true; });
         setOnlinePlayers(online);
 
+        // Host promotion logic
         const { data: latestRoom } = await supabase.from('rooms').select('host_name').eq('code', roomCode).single();
         if (latestRoom && !online[latestRoom.host_name]) {
           const { data: currentPlayers } = await supabase.from('players').select('*').eq('room_code', roomCode).order('id', { ascending: true });
           const humans = (currentPlayers || []).filter(p => !p.is_bot && online[p.name]);
           if (humans.length > 0 && humans[0].name === playerName) {
             console.log("Promoting self to host due to current host absence...");
-            const { error } = await supabase.from('rooms').update({ host_name: playerName }).eq('code', roomCode);
-            if (!error) fetchRoomData();
+            const { error: promoErr } = await supabase.from('rooms').update({ host_name: playerName }).eq('code', roomCode);
+            if (!promoErr) fetchRoomData();
           }
         }
       })
@@ -152,15 +187,14 @@ export default function WaitingRoom() {
       .on('presence', { event: 'leave' }, () => fetchRoomData())
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('Realtime active');
           await channel.track({ online_at: new Date().toISOString() });
         }
       });
 
     return () => { supabase.removeChannel(channel); };
-  }, [roomCode, navigate, location.state, playerName, fetchRoomData]);
+  }, [roomCode, navigate, location.state, playerName, fetchRoomData, session]);
 
-  // Real-time search logic
+  // Real-time search logic for Invite Modal
   useEffect(() => {
     const searchUsers = async () => {
       if (searchQuery.length < 2) {
@@ -171,22 +205,28 @@ export default function WaitingRoom() {
       setSearchLoading(true);
       setSearchError(null);
       try {
-        const { data, error } = await searchProfiles(searchQuery, authSession?.user?.id);
-        if (error) {
-          console.error('Search error:', error);
-          const msg = error.message || '';
+        const { data, error: sErr } = await searchProfiles(searchQuery, session?.user?.id);
+        if (sErr) {
+          const msg = sErr.message || '';
           setSearchError(
-            msg.includes('profiles') || error.code === '42P01'
-              ? 'Tabel profiles belum ada di Supabase. Jalankan supabase/setup_profiles_and_invites.sql'
+            msg.includes('profiles') || sErr.code === '42P01'
+              ? 'Tabel profiles belum ada di Supabase.'
               : msg
           );
           setSearchResults([]);
         } else {
           const filtered = data.filter((u) => !roomMemberIds.has(u.id));
-          setSearchResults(filtered);
+
+          // Check if searched users are currently in a game
+          const userIds = filtered.map(u => u.id);
+          const activeGames = await getUsersActiveGames(userIds);
+
+          setSearchResults(filtered.map(u => ({
+            ...u,
+            isInGame: !!activeGames[u.id]
+          })));
         }
       } catch (err) {
-        console.error('Search error:', err);
         setSearchError('Gagal mencari pengguna.');
       } finally {
         setSearchLoading(false);
@@ -195,7 +235,7 @@ export default function WaitingRoom() {
 
     const timer = setTimeout(searchUsers, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery, authSession?.user?.id, roomMemberIds]);
+  }, [searchQuery, session?.user?.id, roomMemberIds]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -204,41 +244,43 @@ export default function WaitingRoom() {
   const sendChatMessage = (e) => {
     if (e) e.preventDefault();
     if (!newMessage.trim() || !channelRef.current) return;
-    
-    const msg = { 
-      sender: playerName, 
-      text: newMessage.trim(), 
+
+    const msg = {
+      sender: playerName,
+      text: newMessage.trim(),
       timestamp: new Date().toISOString(),
-      id: Date.now() + Math.random() 
+      id: Date.now() + Math.random()
     };
-    
+
     channelRef.current.send({
       type: 'broadcast',
       event: 'chat',
       payload: msg
     });
-    
+
     setMessages(prev => [...prev, msg]);
     setNewMessage('');
   };
 
   const handleLeaveRoom = async () => {
-    if (authSession?.user?.id) {
-      await supabase.from('players').delete().eq('room_code', roomCode).eq('id', authSession.user.id);
+    if (session?.user?.id) {
+      await supabase.from('players').delete().eq('room_code', roomCode).eq('id', session.user.id);
     } else {
       await supabase.from('players').delete().eq('room_code', roomCode).eq('name', playerName);
     }
     setCurrentRoomCode(null);
-    const { data: remainingPlayers } = await supabase.from('players').select('is_bot').eq('room_code', roomCode);
+    const { data: remainingPlayers } = await supabase.from('players').select('is_bot, name').eq('room_code', roomCode);
     const humans = (remainingPlayers || []).filter(p => !p.is_bot);
-    
-    if (humans.length === 0) { 
-      if ((remainingPlayers || []).length > 0) {
-        await supabase.from('rooms').delete().eq('code', roomCode);
-      }
+
+    if (humans.length === 0) {
+      // Delete room if no humans left
+      await supabase.from('rooms').delete().eq('code', roomCode);
     } else if (isHost) {
+      // Pass host to next human
       const nextHost = humans[0];
-      if (nextHost) { await supabase.from('rooms').update({ host_name: nextHost.name }).eq('code', roomCode); }
+      if (nextHost) {
+        await supabase.from('rooms').update({ host_name: nextHost.name }).eq('code', roomCode);
+      }
     }
     navigate('/lobby', { replace: true });
   };
@@ -247,28 +289,58 @@ export default function WaitingRoom() {
     const difficulties = ['Skilled', 'Fast', 'Random', 'Expert'];
     const diff = difficulties[Math.floor(Math.random() * difficulties.length)];
     const botName = `Bot_${diff}_${Math.floor(Math.random() * 100)}`;
-    await supabase.from('players').insert([{ room_code: roomCode, name: botName, is_bot: true, difficulty: diff, ready: true, score: 0, current_question: 1 }]);
+    await supabase.from('players').insert([{
+      room_code: roomCode,
+      name: botName,
+      is_bot: true,
+      difficulty: diff,
+      ready: true,
+      score: 0,
+      current_question: 1
+    }]);
   };
 
   const handleKick = async (targetName) => {
-    setPlayers(prev => prev.filter(p => p.name !== targetName));
     await supabase.from('players').delete().eq('room_code', roomCode).eq('name', targetName);
   };
 
   const toggleReady = async () => {
     const me = players.find(p => p.name === playerName);
-    if (me) { await supabase.from('players').update({ ready: !me.ready }).eq('id', me.id); }
+    if (me) {
+      await supabase.from('players').update({ ready: !me.ready }).eq('id', me.id);
+    }
   };
 
   const handleStartGame = async () => {
     const othersReady = players.filter(p => p.name !== playerName && !p.is_bot).every(p => p.ready);
     if (!othersReady) { alert("Semua pemain harus Ready!"); return; }
+
     const selectedGameType = room.game_type || initialGameType || 'color-race';
-    await supabase.from('players').update({ 
-      score: 0, current_question: 1, finished: false, ready: true, correct_count: 0, wrong_count: 0
+
+    // Set all players to starting state
+    await supabase.from('players').update({
+      score: 0,
+      current_question: 1,
+      finished: false,
+      ready: true,
+      correct_count: 0,
+      wrong_count: 0
     }).eq('room_code', roomCode);
-    await supabase.from('rooms').update({ status: 'playing', game_type: selectedGameType }).eq('code', roomCode);
-    navigate(`/game/${selectedGameType}`, { state: { ...location.state, gameType: selectedGameType, numQuestions: room.num_questions || 14 } });
+
+    // Set room to playing
+    await supabase.from('rooms').update({
+      status: 'playing',
+      game_type: selectedGameType
+    }).eq('code', roomCode);
+
+    navigate(`/game/${selectedGameType}`, {
+      state: {
+        ...location.state,
+        gameType: selectedGameType,
+        numQuestions: room.num_questions || 14,
+        playerName: playerName
+      }
+    });
   };
 
   const handleInvite = async (targetUser) => {
@@ -276,8 +348,8 @@ export default function WaitingRoom() {
       setInviteToast({ type: 'error', message: 'Room code tidak tersedia.' });
       return;
     }
-    if (!authSession?.user?.id) {
-      setInviteToast({ type: 'error', message: 'Login dulu untuk mengirim undangan (bukan guest).' });
+    if (!session?.user?.id) {
+      setInviteToast({ type: 'error', message: 'Login dulu untuk mengirim undangan.' });
       return;
     }
 
@@ -287,30 +359,32 @@ export default function WaitingRoom() {
       return;
     }
 
+    if (targetUser.isInGame) {
+      setInviteToast({ type: 'error', message: `${targetUser.name} sedang dalam permainan.` });
+      return;
+    }
+
     if (roomMemberIds.has(targetUser.id) || (await isUserInRoom(targetUser.id, roomCode))) {
       setInviteToast({ type: 'error', message: `${targetUser.name} sudah ada di room ini.` });
       return;
     }
 
-    const { error } = await supabase.from('invites').insert({
-      from_id: authSession.user.id,
+    const { error: invErr } = await supabase.from('invites').insert({
+      from_id: session.user.id,
       to_id: targetUser.id,
       room_code: roomCode,
       status: 'pending',
     });
 
-    if (error) {
-      setInviteToast({
-        type: 'error',
-        message: error.message || 'Gagal mengirim undangan.',
-      });
+    if (invErr) {
+      setInviteToast({ type: 'error', message: 'Gagal mengirim undangan.' });
       return;
     }
 
     await broadcastInviteToUser(targetUser.id, {
       room_code: roomCode,
       senderName: playerName,
-      from_id: authSession.user.id,
+      from_id: session.user.id,
     });
 
     setInviteToast({ type: 'success', message: `Undangan terkirim ke ${targetUser.name}.` });
@@ -326,11 +400,11 @@ export default function WaitingRoom() {
     </div>
   );
 
-  if (!roomCode || !room) return (
+  if (!roomCode || !room || players.length === 0) return (
     <div className="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
       <div className="glass-panel" style={{ textAlign: 'center' }}>
         <Loader2 className="animate-spin" size={40} style={{ margin: '0 auto 1rem', color: 'var(--primary)' }} />
-        <p>Connecting to Room {roomCode}...</p>
+        <p>Connecting to Room {roomCode} and fetching players...</p>
       </div>
     </div>
   );
@@ -340,33 +414,9 @@ export default function WaitingRoom() {
   return (
     <div className="container" style={{ padding: '1rem' }}>
       <style>{`
-        .waiting-grid { 
-          display: grid; 
-          grid-template-columns: 1.2fr 0.8fr; 
-          gap: 1rem; 
-          width: 100%; 
-          max-width: 900px; 
-          margin: 0 auto;
-          align-items: stretch; 
-        }
-        .waiting-panel { 
-          position: relative; 
-          padding: 2rem; 
-          height: 100%;
-          display: flex;
-          flex-direction: column;
-        }
-        .chat-panel { 
-          background: var(--panel-bg); 
-          backdrop-filter: blur(20px); 
-          border: 1px solid var(--glass-border); 
-          border-radius: 24px; 
-          height: 100%; 
-          min-height: 500px;
-          display: flex; 
-          flex-direction: column; 
-          overflow: hidden; 
-        }
+        .waiting-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 1rem; width: 100%; max-width: 900px; margin: 0 auto; align-items: stretch; }
+        .waiting-panel { position: relative; padding: 2rem; height: 100%; display: flex; flex-direction: column; }
+        .chat-panel { background: var(--panel-bg); backdrop-filter: blur(20px); border: 1px solid var(--glass-border); border-radius: 24px; height: 100%; min-height: 500px; display: flex; flex-direction: column; overflow: hidden; }
         .online-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
         @media (max-width: 1000px) { .waiting-grid { grid-template-columns: 1fr; } .chat-panel { height: 400px; } }
         @media (max-width: 768px) { .waiting-panel { padding: 4rem 1.2rem 2rem; } .waiting-title { font-size: 2rem !important; } .back-btn-wr { top: 1rem !important; left: 1rem !important; } }
@@ -433,7 +483,7 @@ export default function WaitingRoom() {
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexShrink: 0 }}>
-                    {(p.name === room.host_name) || p.is_bot || p.ready ? <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', fontWeight: '700' }}><CheckCircle size={16}/> Ready</span> : <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: '500' }}>Waiting...</span>}
+                    {(p.name === room.host_name) || p.is_bot || p.ready ? <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', fontWeight: '700' }}><CheckCircle size={16} /> Ready</span> : <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: '500' }}>Waiting...</span>}
                     {isHost && p.name !== playerName && (
                       <button onClick={() => handleKick(p.name)} className="kick-btn" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444', cursor: 'pointer', padding: '0.4rem', borderRadius: '10px' }} title="Kick Player"><UserMinus size={18} /></button>
                     )}
@@ -463,17 +513,17 @@ export default function WaitingRoom() {
                 </button>
               )}
               {isHost && (
-                <button 
-                  className="btn" 
-                  style={{ 
-                    width: '100%', maxWidth: '416px', 
-                    background: players.length < 2 || !players.every(p => p.ready) ? '#94a3b8' : 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)', 
-                    color: 'white', 
-                    cursor: players.length < 2 || !players.every(p => p.ready) ? 'not-allowed' : 'pointer', 
-                    boxShadow: players.length < 2 || !players.every(p => p.ready) ? 'none' : '0 8px 20px rgba(99, 102, 241, 0.3)', 
-                    transform: 'none' 
-                  }} 
-                  disabled={players.length < 2 || !players.every(p => p.ready)} 
+                <button
+                  className="btn"
+                  style={{
+                    width: '100%', maxWidth: '416px',
+                    background: players.length < 2 || !players.every(p => p.ready) ? '#94a3b8' : 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)',
+                    color: 'white',
+                    cursor: players.length < 2 || !players.every(p => p.ready) ? 'not-allowed' : 'pointer',
+                    boxShadow: players.length < 2 || !players.every(p => p.ready) ? 'none' : '0 8px 20px rgba(99, 102, 241, 0.3)',
+                    transform: 'none'
+                  }}
+                  disabled={players.length < 2 || !players.every(p => p.ready)}
                   onClick={handleStartGame}
                 >
                   {players.length < 2 ? 'Need 2 or more' : (!players.every(p => p.ready) ? 'Other player not ready' : 'Start Game')}
@@ -500,37 +550,14 @@ export default function WaitingRoom() {
             {messages.map((msg, i) => (
               <div key={i} style={{ alignSelf: msg.sender === playerName ? 'flex-end' : 'flex-start', maxWidth: '85%', display: 'flex', flexDirection: 'column', alignItems: msg.sender === playerName ? 'flex-end' : 'flex-start' }}>
                 <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '2px', marginLeft: '4px', marginRight: '4px', fontWeight: '600' }}>{msg.sender}</span>
-                <div style={{ 
-                  background: msg.sender === playerName ? 'var(--primary)' : 'var(--input-bg)', 
-                  color: msg.sender === playerName ? 'white' : 'var(--text-main)', 
-                  padding: '0.7rem 1rem', 
-                  borderRadius: '18px', 
-                  borderTopRightRadius: msg.sender === playerName ? '4px' : '18px', 
-                  borderTopLeftRadius: msg.sender === playerName ? '18px' : '4px', 
-                  fontSize: '0.92rem', 
-                  wordBreak: 'break-word',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-                  border: msg.sender === playerName ? 'none' : '1px solid var(--glass-border)',
-                  lineHeight: '1.4'
-                }}>
-                  {msg.text}
-                </div>
+                <div style={{ background: msg.sender === playerName ? 'var(--primary)' : 'var(--input-bg)', color: msg.sender === playerName ? 'white' : 'var(--text-main)', padding: '0.7rem 1rem', borderRadius: '18px', borderTopRightRadius: msg.sender === playerName ? '4px' : '18px', borderTopLeftRadius: msg.sender === playerName ? '18px' : '4px', fontSize: '0.92rem', wordBreak: 'break-word', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', border: msg.sender === playerName ? 'none' : '1px solid var(--glass-border)', lineHeight: '1.4' }}>{msg.text}</div>
               </div>
             ))}
             <div ref={chatEndRef} />
           </div>
           <form onSubmit={sendChatMessage} style={{ padding: '1rem', borderTop: '1px solid var(--glass-border)', display: 'flex', gap: '0.6rem', background: 'var(--panel-bg)' }}>
-            <input 
-              type="text" 
-              placeholder="Type a message..." 
-              className="input-field" 
-              style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', borderRadius: '12px' }} 
-              value={newMessage} 
-              onChange={(e) => setNewMessage(e.target.value)} 
-            />
-            <button type="submit" className="btn btn-primary" style={{ width: 'auto', padding: '0.7rem', borderRadius: '12px' }}>
-              <Send size={18} />
-            </button>
+            <input type="text" placeholder="Type a message..." className="input-field" style={{ padding: '0.7rem 1.2rem', fontSize: '0.9rem', borderRadius: '12px' }} value={newMessage} onChange={(e) => setNewMessage(e.target.value)} />
+            <button type="submit" className="btn btn-primary" style={{ width: 'auto', padding: '0.7rem', borderRadius: '12px' }}><Send size={18} /></button>
           </form>
         </div>
       </div>
@@ -542,68 +569,42 @@ export default function WaitingRoom() {
               <h3 style={{ fontSize: '1.2rem', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><UserPlus size={20} color="var(--primary)" /> Invite Friends</h3>
               <button onClick={() => { setShowInviteModal(false); setSearchQuery(''); setSearchResults([]); }} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={24} /></button>
             </div>
-            
+
             <div style={{ position: 'relative', marginBottom: '1.5rem' }}>
-              <input 
-                type="text" 
-                placeholder="Search email or name..." 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="input-field"
-                style={{ paddingLeft: '2.8rem', fontSize: '0.9rem' }}
-              />
+              <input type="text" placeholder="Search email or name..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="input-field" style={{ paddingLeft: '2.8rem', fontSize: '0.9rem' }} />
               <Search size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', maxHeight: '300px', overflowY: 'auto' }}>
               {searchLoading ? (
-                <div style={{ textAlign: 'center', padding: '2rem' }}>
-                  <Loader2 className="animate-spin" size={30} color="var(--primary)" style={{ margin: '0 auto' }} />
-                </div>
+                <div style={{ textAlign: 'center', padding: '2rem' }}><Loader2 className="animate-spin" size={30} color="var(--primary)" style={{ margin: '0 auto' }} /></div>
               ) : searchQuery.length < 2 ? (
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>Type at least 2 characters to search.</p>
               ) : searchError ? (
                 <p style={{ fontSize: '0.85rem', color: 'var(--danger)', textAlign: 'center', padding: '1rem' }}>{searchError}</p>
               ) : searchResults.length === 0 ? (
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>Tidak ada akun ditemukan. Pastikan tabel profiles sudah dibuat dan user sudah login minimal sekali.</p>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>Tidak ada akun ditemukan.</p>
               ) : (
                 searchResults.map((targetUser) => {
                   const displayName = targetUser.name;
                   const initial = displayName.charAt(0).toUpperCase();
                   const isOnline = Boolean(globalOnlineUsers[targetUser.id]);
-                  
+                  const isInGame = targetUser.isInGame;
+                  const canInvite = isOnline && !isInGame;
+
                   return (
                     <div key={targetUser.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.8rem', background: 'var(--input-bg)', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                         <div style={{ position: 'relative' }}>
-                          <div style={{ width: '35px', height: '35px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>
-                            {initial}
-                          </div>
+                          <div style={{ width: '35px', height: '35px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>{initial}</div>
                           <span style={{ position: 'absolute', bottom: 0, right: 0, width: '10px', height: '10px', borderRadius: '50%', background: isOnline ? 'var(--success)' : '#94a3b8', border: '2px solid var(--bg-color)' }}></span>
                         </div>
                         <div>
                           <p style={{ fontSize: '0.9rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '150px' }}>{displayName}</p>
-                          <p style={{ fontSize: '0.75rem', color: isOnline ? 'var(--success)' : 'var(--text-muted)', fontWeight: isOnline ? 700 : 500 }}>{isOnline ? 'Online' : 'Offline'}</p>
+                          <p style={{ fontSize: '0.75rem', color: isInGame ? '#f59e0b' : (isOnline ? 'var(--success)' : 'var(--text-muted)'), fontWeight: (isOnline || isInGame) ? 700 : 500 }}>{isInGame ? 'Sedang Bermain' : (isOnline ? 'Online' : 'Offline')}</p>
                         </div>
                       </div>
-                      <button 
-                        type="button"
-                        className="btn btn-primary" 
-                        style={{ 
-                          padding: '0.4rem 0.8rem', 
-                          width: 'auto', 
-                          fontSize: '0.8rem',
-                          opacity: isOnline ? 1 : 0.55,
-                          cursor: isOnline ? 'pointer' : 'not-allowed',
-                          background: isOnline ? undefined : '#94a3b8',
-                          boxShadow: isOnline ? undefined : 'none',
-                        }} 
-                        disabled={!isOnline}
-                        title={isOnline ? 'Kirim undangan' : 'Pemain offline — tidak bisa diundang'}
-                        onClick={() => isOnline && handleInvite(targetUser)}
-                      >
-                        Invite
-                      </button>
+                      <button type="button" className="btn btn-primary" style={{ padding: '0.4rem 0.8rem', width: 'auto', fontSize: '0.8rem', opacity: canInvite ? 1 : 0.55, cursor: canInvite ? 'pointer' : 'not-allowed', background: canInvite ? undefined : '#94a3b8', boxShadow: canInvite ? undefined : 'none' }} disabled={!canInvite} title={isInGame ? 'Pemain sedang bermain' : (isOnline ? 'Kirim undangan' : 'Pemain offline')} onClick={() => canInvite && handleInvite(targetUser)}>Invite</button>
                     </div>
                   );
                 })

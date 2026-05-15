@@ -1,47 +1,48 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, Globe, ArrowRight, User, ArrowLeft } from 'lucide-react';
+import { Lock, Globe, ArrowRight, User, ArrowLeft, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { setCurrentRoomCode } from '../lib/roomJoin';
+import { joinRoomAsPlayer, createRoomAsPlayer, getSessionPlayerName, isUserInGame } from '../lib/roomJoin';
 
 export default function Lobby() {
   const navigate = useNavigate();
   const [playerName, setPlayerName] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const [publicRooms, setPublicRooms] = useState([]);
+  const [session, setSession] = useState(null);
 
-  // Auto-fill player name from auth or guest session
+  // Sync session and playerName
   useEffect(() => {
-    const guestName = localStorage.getItem('guestName');
-    if (guestName) {
-      setPlayerName(guestName);
-      return;
-    }
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user?.email) {
-        const name = session.user.user_metadata?.full_name || session.user.email.split('@')[0];
-        setPlayerName(name);
-      }
+    // Initial session
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
+      setPlayerName(getSessionPlayerName(s));
     });
+
+    // Listen to changes (login/logout)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+      setPlayerName(getSessionPlayerName(s));
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const fetchRooms = async () => {
     try {
-      const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const { data: allRooms } = await supabase.from('rooms').select('*, players(*)');
+      // Optimasi cleanup: Hanya hapus room yang benar-benar kosong dan statusnya masih waiting
+      const { data: roomsWithPlayers } = await supabase
+        .from('rooms')
+        .select('id, created_at, players(is_bot)')
+        .eq('status', 'waiting');
 
-      if (allRooms) {
-        for (const r of allRooms) {
+      if (roomsWithPlayers) {
+        for (const r of roomsWithPlayers) {
           const hasHumans = r.players && r.players.some(p => !p.is_bot);
-          const createdAt = new Date(r.created_at).getTime();
-          const isOld = Date.now() - createdAt > 5 * 60 * 1000;
-          const isSlightlyOld = Date.now() - createdAt > 30 * 1000;
-
-          // Delete if it has no humans and is more than 30 seconds old
-          if (!hasHumans && isSlightlyOld) {
-            await supabase.from('rooms').delete().eq('id', r.id);
-          } else if (isOld && r.status === 'waiting') {
+          const isOld = (Date.now() - new Date(r.created_at).getTime()) > 45 * 1000;
+          if (!hasHumans && isOld) {
             await supabase.from('rooms').delete().eq('id', r.id);
           }
         }
@@ -55,10 +56,15 @@ export default function Lobby() {
         .order('created_at', { ascending: false });
 
       if (roomsError) throw roomsError;
+      
       const formatted = (roomsData || [])
         .filter(r => r.players && r.players.length > 0)
         .map(r => ({
-          code: r.code, host: r.host_name, players: r.players.length, maxPlayers: 8, status: r.status
+          code: r.code, 
+          host: r.host_name, 
+          players: r.players.length, 
+          maxPlayers: 8, 
+          status: r.status
         }));
       setPublicRooms(formatted);
     } catch (err) {
@@ -76,70 +82,72 @@ export default function Lobby() {
     return () => supabase.removeChannel(channel);
   }, []);
 
-  const generateRoomCode = (type) => {
-    const prefix = type === 'public' ? 'PUB-' : 'PRV-';
-    return `${prefix}${Math.floor(100 + Math.random() * 900)}`;
-  };
-
   const handleJoin = async (e, targetCode = null) => {
     if (e) e.preventDefault();
     const codeToJoin = (targetCode || roomCode).trim().toUpperCase();
     if (!playerName.trim()) { setError('Please enter your name first'); return; }
     if (!codeToJoin) { setError('Please enter a room code'); return; }
 
+    setLoading(true);
+    setError('');
+
     try {
-      const { data: room, error: roomError } = await supabase.from('rooms').select('*').eq('code', codeToJoin).single();
-      if (roomError || !room) { setError('Room not found'); return; }
-      if (room.status !== 'waiting') { setError('Game already in progress'); return; }
-
-      const { count } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('room_code', codeToJoin);
-      if (count >= 8) { setError('Room is full'); return; }
-
-      const { data: authData } = await supabase.auth.getSession();
-      const authId = authData?.session?.user?.id;
-      const playerRow = {
-        room_code: codeToJoin,
-        name: playerName.trim(),
-        ready: false,
-        score: 0,
-        current_question: 1,
-        finished: false,
-        is_bot: false,
-      };
-      if (authId) playerRow.id = authId;
-
-      const { error: joinError } = await supabase.from('players').insert([playerRow]);
-
-      if (joinError) {
-        if (joinError.code === '23505') setError('Name already taken in this room');
-        else throw joinError;
+      // isUserInGame sekarang hanya memblokir jika status room = 'playing'
+      if (session?.user?.id && await isUserInGame(session.user.id)) {
+        setError('Kamu sedang dalam permainan yang sedang berlangsung.');
+        setLoading(false);
         return;
       }
-      setCurrentRoomCode(codeToJoin);
-      navigate('/waiting-room', { state: { roomCode: codeToJoin, playerName: playerName.trim(), isHost: false } });
-    } catch (err) { setError('Failed to join room'); }
+
+      const result = await joinRoomAsPlayer(session, codeToJoin);
+      if (result.ok) {
+        navigate('/waiting-room', { 
+          state: { 
+            roomCode: codeToJoin, 
+            playerName: result.playerName, 
+            isHost: false 
+          } 
+        });
+      } else {
+        setError(result.error?.message || 'Gagal masuk room');
+      }
+    } catch (err) {
+      setError('Failed to join room');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const createRoom = async (type) => {
     if (!playerName.trim()) { setError('Please enter your name first'); return; }
-    const code = generateRoomCode(type);
+    
+    setLoading(true);
+    setError('');
+
     try {
-      await supabase.from('rooms').insert([{ code, type, host_name: playerName.trim(), status: 'waiting', game_type: 'color-race', time_limit: 20, num_questions: 14 }]);
-      const { data: authData } = await supabase.auth.getSession();
-      const hostRow = {
-        room_code: code,
-        name: playerName.trim(),
-        ready: true,
-        score: 0,
-        current_question: 1,
-        finished: false,
-        is_bot: false,
-      };
-      if (authData?.session?.user?.id) hostRow.id = authData.session.user.id;
-      await supabase.from('players').insert([hostRow]);
-      setCurrentRoomCode(code);
-      navigate('/waiting-room', { state: { roomCode: code, playerName: playerName.trim(), isHost: true } });
-    } catch (err) { setError('Failed to create room'); }
+      if (session?.user?.id && await isUserInGame(session.user.id)) {
+        setError('Kamu sedang dalam permainan yang sedang berlangsung.');
+        setLoading(false);
+        return;
+      }
+
+      const result = await createRoomAsPlayer(session, type);
+      if (result.ok) {
+        navigate('/waiting-room', { 
+          state: { 
+            roomCode: result.roomCode, 
+            playerName: result.playerName, 
+            isHost: true 
+          } 
+        });
+      } else {
+        setError(result.error?.message || 'Gagal membuat room');
+      }
+    } catch (err) {
+      setError('Failed to create room');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -153,6 +161,7 @@ export default function Lobby() {
           border: 1px solid var(--glass-border); transition: border-color 0.2s;
         }
         .room-item:hover { border-color: var(--primary); }
+        .disabled-btn { opacity: 0.5; cursor: not-allowed; }
       `}</style>
 
       <div className="glass-panel" style={{ maxWidth: '1050px', width: '100%', position: 'relative' }}>
@@ -173,7 +182,6 @@ export default function Lobby() {
         )}
 
         <div className="lobby-grid">
-          {/* Left panel – join / create */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
             <div className="input-group">
               <label><User size={16} style={{ verticalAlign: 'middle', marginRight: '0.4rem' }} />Your Name</label>
@@ -183,7 +191,9 @@ export default function Lobby() {
                 className="input-field"
                 value={playerName}
                 onChange={(e) => { setPlayerName(e.target.value); setError(''); }}
+                disabled={loading || !!session}
               />
+              {session && <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>Nama otomatis dari akun kamu.</p>}
             </div>
 
             <div style={{ borderBottom: '1px solid var(--glass-border)', paddingBottom: '1.5rem' }}>
@@ -191,14 +201,15 @@ export default function Lobby() {
               <form onSubmit={handleJoin} style={{ display: 'flex', gap: '0.75rem' }}>
                 <input
                   type="text"
-                  placeholder="e.g. PRV-123"
+                  placeholder="e.g. PUB-123"
                   className="input-field"
                   value={roomCode}
                   onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
                   style={{ flex: 1 }}
+                  disabled={loading}
                 />
-                <button type="submit" className="btn btn-primary" style={{ width: 'auto', padding: '0 1.5rem', flexShrink: 0 }}>
-                  <ArrowRight size={20} />
+                <button type="submit" className={`btn btn-primary ${loading ? 'disabled-btn' : ''}`} style={{ width: 'auto', padding: '0 1.5rem', flexShrink: 0 }} disabled={loading}>
+                  {loading ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
                 </button>
               </form>
             </div>
@@ -206,17 +217,16 @@ export default function Lobby() {
             <div>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Create new room</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <button className="btn btn-primary" onClick={() => createRoom('public')}>
-                  <Globe size={20} /> Create Public Room
+                <button className={`btn btn-primary ${loading ? 'disabled-btn' : ''}`} onClick={() => createRoom('public')} disabled={loading}>
+                  {loading ? <Loader2 size={18} className="animate-spin" /> : <Globe size={20} />} Create Public Room
                 </button>
-                <button className="btn btn-secondary" onClick={() => createRoom('private')}>
-                  <Lock size={20} /> Create Private Room
+                <button className={`btn btn-secondary ${loading ? 'disabled-btn' : ''}`} onClick={() => createRoom('private')} disabled={loading}>
+                  {loading ? <Loader2 size={18} className="animate-spin" /> : <Lock size={20} />} Create Private Room
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Right panel – public rooms list */}
           <div style={{ background: 'var(--input-bg)', borderRadius: '20px', padding: '1.5rem', border: '1px solid var(--glass-border)' }}>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem', textTransform: 'uppercase', letterSpacing: '0.08em', textAlign: 'center' }}>
               Active Public Rooms
@@ -224,21 +234,22 @@ export default function Lobby() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '420px', overflowY: 'auto' }}>
               {publicRooms.length === 0 ? (
                 <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem 0', fontSize: '0.95rem' }}>
-                  No public rooms yet.<br />Be the first to create one!
+                  No public rooms yet.
                 </div>
               ) : publicRooms.map(r => (
                 <div key={r.code} className="room-item">
-                  <div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontWeight: '700', marginBottom: '0.2rem' }}>{r.code}</div>
-                    <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       Host: {r.host} &bull; {r.players}/8 players
                     </div>
                   </div>
                   {r.status !== 'playing' && (
                     <button
-                      className="btn btn-primary"
-                      style={{ width: 'auto', padding: '0.4rem 1rem', fontSize: '0.85rem' }}
+                      className={`btn btn-primary ${loading ? 'disabled-btn' : ''}`}
+                      style={{ width: 'auto', padding: '0.4rem 1rem', fontSize: '0.85rem', marginLeft: '0.5rem' }}
                       onClick={() => handleJoin(null, r.code)}
+                      disabled={loading}
                     >
                       Join
                     </button>

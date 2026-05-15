@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase';
 const ISHIHARA_IMAGES = [
   '/12.png', '/15.png', '/2.png', '/26.png', '/29.png', '/3.png', '/35.png', '/42.png', '/45.png',
   '/5 (14).png', '/5.png', '/57.png', '/6 (11).png', '/6.png', '/7.png', '/73.png', '/74.png', '/8.png',
-  '/96.png', '/97.png', '/Nothing (2).png', '/Nothing (45).png', '/Nothing (73).png', 
+  '/96.png', '/97.png', '/Nothing (2).png', '/Nothing (45).png', '/Nothing (73).png',
   '/Nothing (a line).png', '/Nothing (line).png', '/Nothing.png', '/Purple & Red.png', '/Violet & Orange.png'
 ];
 
@@ -18,13 +18,13 @@ const getAnswerFromFile = (file) => {
 
 const buildQuestion = (file) => {
   const answer = getAnswerFromFile(file);
-  
+
   const numbers = ['2', '3', '5', '6', '7', '8', '12', '15', '26', '29', '35', '42', '45', '57', '73', '74', '96', '97'];
   const words = ['Purple & Red', 'Violet & Orange', 'Green Line', 'Blue Line', 'Nothing'];
-  
+
   let distractors = [];
   const pool = answer.toLowerCase() === 'nothing' ? [...numbers, 'Purple & Red', 'Green Line'] : [...numbers, ...words];
-  
+
   while (distractors.length < 3) {
     const rand = pool[Math.floor(Math.random() * pool.length)];
     if (rand !== answer && !distractors.includes(rand)) {
@@ -46,7 +46,7 @@ function ScoreCounter({ targetScore }) {
     const end = targetScore;
     if (start === end) return;
     const range = end - start;
-    const duration = 800; 
+    const duration = 800;
     const startTime = performance.now();
     const animate = (now) => {
       const elapsed = now - startTime;
@@ -167,7 +167,17 @@ export default function IshiharaGame() {
   const startGame = () => {
     const questionsCount = roomCode ? numQuestions : selectedQuestionCount;
     const qList = [...ISHIHARA_IMAGES].sort(() => Math.random() - 0.5).slice(0, questionsCount).map(buildQuestion);
-    setQuestions(qList); setSetupMode(false); setCurrentQ(0); setScore(0); setWrongCount(0); setCorrectCount(0); setTimeLeft(timePerQuestion);
+    setQuestions(qList);
+    setSetupMode(false);
+    setCurrentQ(0);
+    setScore(0);
+    setWrongCount(0);
+    setCorrectCount(0);
+    scoreRef.current = 0;
+    correctRef.current = 0;
+    wrongRef.current = 0;
+
+    setTimeLeft(timePerQuestion);
   };
 
   const nextQuestion = (isCorrect) => {
@@ -217,7 +227,16 @@ export default function IshiharaGame() {
       setWaitingForOthers(true);
       await supabase.from('players').update({ finished: true, score: fs, correct_count: fcc, wrong_count: fwc }).eq('room_code', roomCode).eq('name', playerName);
     } else {
-      navigate('/score', { state: { score: fs, mode: 'Ishihara Test', wrongCount: fwc, correctCount: fcc, numQuestions: totalQuestions, ...location.state } });
+      navigate('/score', {
+        state: {
+          ...location.state,
+          score: fs,
+          mode: 'Ishihara Test',
+          wrongCount: fwc,
+          correctCount: fcc,
+          numQuestions: totalQuestions
+        }
+      });
     }
   };
 

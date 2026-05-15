@@ -15,7 +15,7 @@ import { supabase } from './lib/supabase';
 import { ensureUserProfile } from './lib/profileSync';
 import { startGlobalPresence, stopGlobalPresence } from './lib/presence';
 import { subscribeToIncomingInvites } from './lib/invites';
-import { joinRoomAsPlayer, isUserInRoom, getCurrentRoomCode } from './lib/roomJoin';
+import { joinRoomAsPlayer, isUserInRoom, getCurrentRoomCode, isUserInGame } from './lib/roomJoin';
 
 function App() {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -27,20 +27,21 @@ function App() {
   const lastInviteKeyRef = useRef(null);
   const navigate = useNavigate();
 
-  const dismissInvite = useCallback(() => {
+  const dismissInvite = useCallback(async () => {
+    if (incomingInvite?.inviteId) {
+      await supabase.from('invites').update({ status: 'rejected' }).eq('id', incomingInvite.inviteId);
+    }
     setIncomingInvite(null);
     setInviteJoinError(null);
-  }, []);
+  }, [incomingInvite]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
     });
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
     });
 
     return () => subscription.unsubscribe();
@@ -53,7 +54,17 @@ function App() {
 
   useEffect(() => {
     if (!session?.user?.id) return;
-    return subscribeToIncomingInvites(session.user.id, async (invite) => {
+
+    const cleanup = subscribeToIncomingInvites(session.user.id, async (invite) => {
+      // PENTING: Cek status apakah user BENAR-BENAR sedang bermain game aktif
+      if (await isUserInGame(session.user.id)) {
+        console.log("Auto-rejecting invite: User is in active 'playing' state.");
+        if (invite.inviteId) {
+          await supabase.from('invites').update({ status: 'rejected' }).eq('id', invite.inviteId);
+        }
+        return;
+      }
+
       const currentRoom = getCurrentRoomCode();
       if (currentRoom === invite.roomCode) return;
       if (await isUserInRoom(session.user.id, invite.roomCode)) return;
@@ -61,15 +72,18 @@ function App() {
       const key = `${invite.inviteId || ''}:${invite.roomCode}:${invite.fromId}`;
       if (lastInviteKeyRef.current === key) return;
       lastInviteKeyRef.current = key;
+
       setInviteJoinError(null);
       setIncomingInvite(invite);
+
       setTimeout(() => {
         if (lastInviteKeyRef.current === key) lastInviteKeyRef.current = null;
       }, 8000);
     });
+
+    return cleanup;
   }, [session?.user?.id]);
 
-  // Presence key = session.user.id → sama dengan players.id / profiles.id / targetUser.id
   useEffect(() => {
     if (!session?.user?.id) return;
     startGlobalPresence(session.user.id);
@@ -84,9 +98,7 @@ function App() {
     audioRef.current.volume = 0.3;
 
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-      }
+      if (audioRef.current) audioRef.current.pause();
     };
   }, []);
 
@@ -159,12 +171,7 @@ function App() {
           >
             <h2
               id="invite-dialog-title"
-              style={{
-                fontSize: '1.35rem',
-                fontWeight: 800,
-                marginBottom: '0.5rem',
-                color: 'var(--text-main)',
-              }}
+              style={{ fontSize: '1.35rem', fontWeight: 800, marginBottom: '0.5rem', color: 'var(--text-main)' }}
             >
               Undangan permainan
             </h2>
@@ -214,22 +221,25 @@ function App() {
         </div>
       )}
 
-      <GlobalControls
-        isPlaying={isPlaying}
-        toggleMusic={toggleMusic}
-        session={session}
-      />
+      <GlobalControls isPlaying={isPlaying} toggleMusic={toggleMusic} session={session} />
 
       <Routes>
-        <Route path="/" element={<Login />} />
+        <Route path="/" element={<Login session={session} />} />
         <Route path="/signup" element={<SignUp />} />
-        <Route path="/home" element={<Home />} />
-        <Route path="/lobby" element={<Lobby />} />
-        <Route path="/select-mode" element={<GameModeSelect />} />
-        <Route path="/waiting-room" element={<WaitingRoom />} />
-        <Route path="/game/color-race" element={<ColorRaceGame />} />
-        <Route path="/game/ishihara" element={<IshiharaGame />} />
-        <Route path="/score" element={<Score />} />
+
+        {session ? (
+          <>
+            <Route path="/home" element={<Home session={session} />} />
+            <Route path="/lobby" element={<Lobby session={session} />} />
+            <Route path="/select-mode" element={<GameModeSelect session={session} />} />
+            <Route path="/waiting-room" element={<WaitingRoom session={session} />} />
+            <Route path="/game/color-race" element={<ColorRaceGame session={session} />} />
+            <Route path="/game/ishihara" element={<IshiharaGame session={session} />} />
+            <Route path="/score" element={<Score session={session} />} />
+          </>
+        ) : (
+          <Route path="*" element={<Login session={session} />} />
+        )}
       </Routes>
     </ThemeProvider>
   );

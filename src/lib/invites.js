@@ -7,7 +7,6 @@ export function inviteBroadcastChannel(userId) {
 
 /**
  * Kirim undangan: insert DB + broadcast ke penerima.
- * @returns {{ ok: boolean, data?: object, error?: Error }}
  */
 export async function sendGameInvite({ fromId, toId, roomCode, senderName }) {
   const { data: authData, error: authError } = await supabase.auth.getSession();
@@ -16,9 +15,6 @@ export async function sendGameInvite({ fromId, toId, roomCode, senderName }) {
   }
 
   const from_id = fromId || authData.session.user.id;
-  if (from_id !== authData.session.user.id) {
-    return { ok: false, error: new Error('Sesi tidak valid. Login ulang.') };
-  }
 
   const { data, error } = await supabase
     .from('invites')
@@ -32,10 +28,11 @@ export async function sendGameInvite({ fromId, toId, roomCode, senderName }) {
     .single();
 
   if (error) {
-    console.error('[invites] insert gagal:', error.code, error.message, error.details);
+    console.error('[invites] insert gagal:', error.message);
     return { ok: false, error };
   }
 
+  // Broadcast realtime (Broadcast API)
   await broadcastInviteToUser(toId, {
     room_code: roomCode,
     senderName: senderName || 'Player',
@@ -47,15 +44,18 @@ export async function sendGameInvite({ fromId, toId, roomCode, senderName }) {
 }
 
 export async function broadcastInviteToUser(toId, payload) {
-  const ch = supabase.channel(inviteBroadcastChannel(toId), {
+  // Gunakan channel unik per user ID
+  const channelName = inviteBroadcastChannel(toId);
+  const ch = supabase.channel(channelName, {
     config: { broadcast: { self: false } },
   });
 
   return new Promise((resolve) => {
+    // Timeout jika subscribe gagal
     const timeout = setTimeout(() => {
       supabase.removeChannel(ch);
       resolve();
-    }, 4000);
+    }, 3000);
 
     ch.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
@@ -65,8 +65,11 @@ export async function broadcastInviteToUser(toId, payload) {
           payload,
         });
         clearTimeout(timeout);
-        supabase.removeChannel(ch);
-        resolve();
+        // Jangan langsung remove channel agar message sempat terkirim
+        setTimeout(() => {
+          supabase.removeChannel(ch);
+          resolve();
+        }, 500);
       }
     });
   });
@@ -74,23 +77,24 @@ export async function broadcastInviteToUser(toId, payload) {
 
 /**
  * Dengarkan undangan masuk (postgres_changes + broadcast).
- * @returns {() => void} cleanup
+ * Digunakan di App.jsx untuk modal global.
  */
 export function subscribeToIncomingInvites(userId, onInvite) {
   if (!userId) return () => {};
 
-  const handleRow = (row) => {
-    if (!row?.room_code) return;
+  const handleInviteData = (room_code, from_id, invite_id, senderName = null) => {
+    if (!room_code) return;
     onInvite({
-      roomCode: row.room_code,
-      fromId: row.from_id,
-      inviteId: row.id,
-      senderName: null,
+      roomCode: room_code,
+      fromId: from_id,
+      inviteId: invite_id,
+      senderName: senderName,
     });
   };
 
+  // 1. Listen via Postgres Changes (DB level)
   const pgChannel = supabase
-    .channel(`pg-invites:${userId}`)
+    .channel(`pg-invites-${userId}`)
     .on(
       'postgres_changes',
       {
@@ -99,20 +103,20 @@ export function subscribeToIncomingInvites(userId, onInvite) {
         table: 'invites',
         filter: `to_id=eq.${userId}`,
       },
-      (payload) => handleRow(payload.new)
+      (payload) => {
+        const row = payload.new;
+        handleInviteData(row.room_code, row.from_id, row.id);
+      }
     )
     .subscribe();
 
+  // 2. Listen via Broadcast (In-memory level, faster)
   const bcChannel = supabase
-    .channel(inviteBroadcastChannel(userId), { config: { broadcast: { self: false } } })
+    .channel(inviteBroadcastChannel(userId), { 
+      config: { broadcast: { self: false } } 
+    })
     .on('broadcast', { event: 'game-invite' }, ({ payload }) => {
-      if (!payload?.room_code) return;
-      onInvite({
-        roomCode: payload.room_code,
-        fromId: payload.from_id,
-        inviteId: payload.invite_id,
-        senderName: payload.senderName,
-      });
+      handleInviteData(payload.room_code, payload.from_id, payload.invite_id, payload.senderName);
     })
     .subscribe();
 
