@@ -3,7 +3,7 @@ import { Search, UserPlus, X, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { searchProfiles } from '../lib/profileSync';
 import { broadcastInviteToUser } from '../lib/invites';
-import { isUserInRoom } from '../lib/roomJoin';
+import { isUserInRoom, enrichUsersWithGameStatus } from '../lib/roomJoin';
 import { useOnlineUsers } from '../hooks/useOnlineUsers';
 import InviteToast from './InviteToast';
 import { useLocation } from 'react-router-dom';
@@ -49,7 +49,10 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
         );
         setResults([]);
       } else {
-        setResults(data.map((u) => ({ id: u.id, name: u.name })));
+        const enriched = await enrichUsersWithGameStatus(
+          data.map((u) => ({ id: u.id, name: u.name }))
+        );
+        setResults(enriched);
       }
       setLoading(false);
     };
@@ -61,6 +64,11 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
   const handleInvite = async (targetUser) => {
     if (!roomCode) {
       setInviteToast({ type: 'error', message: 'Room code belum tersedia. Masuk waiting room dulu.' });
+      return;
+    }
+
+    if (targetUser.inGame) {
+      setInviteToast({ type: 'error', message: `${targetUser.name} sedang bermain.` });
       return;
     }
 
@@ -238,6 +246,10 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
                 const displayName = targetUser.name || 'Unknown Player';
                 const initial = displayName.charAt(0).toUpperCase();
                 const isOnline = Boolean(globalOnlineUsers[targetUser.id]);
+                const inGame = Boolean(targetUser.inGame);
+                const canInvite = isOnline && !inGame;
+                const statusLabel = inGame ? 'Sedang Bermain' : isOnline ? 'Online' : 'Offline';
+                const statusColor = inGame ? '#f59e0b' : isOnline ? 'var(--success)' : 'var(--text-muted)';
 
                 return (
                   <div
@@ -279,7 +291,7 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
                             width: '10px',
                             height: '10px',
                             borderRadius: '50%',
-                            background: isOnline ? 'var(--success)' : '#94a3b8',
+                            background: inGame ? '#f59e0b' : isOnline ? 'var(--success)' : '#94a3b8',
                             border: '2px solid var(--bg-color)',
                           }}
                         />
@@ -302,11 +314,11 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
                         <p
                           style={{
                             fontSize: '0.7rem',
-                            color: isOnline ? 'var(--success)' : 'var(--text-muted)',
-                            fontWeight: isOnline ? 700 : 500,
+                            color: statusColor,
+                            fontWeight: inGame || isOnline ? 700 : 500,
                           }}
                         >
-                          {isOnline ? 'Online' : 'Offline'}
+                          {statusLabel}
                         </p>
                       </div>
                     </div>
@@ -314,21 +326,27 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
                     {roomCode && (
                       <button
                         type="button"
-                        onClick={() => isOnline && handleInvite(targetUser)}
-                        disabled={!isOnline}
+                        onClick={() => canInvite && handleInvite(targetUser)}
+                        disabled={!canInvite}
                         style={{
-                          background: isOnline ? 'var(--primary-glow)' : 'rgba(148, 163, 184, 0.2)',
+                          background: canInvite ? 'var(--primary-glow)' : 'rgba(148, 163, 184, 0.2)',
                           border: 'none',
-                          color: isOnline ? 'var(--primary)' : 'var(--text-muted)',
+                          color: canInvite ? 'var(--primary)' : 'var(--text-muted)',
                           padding: '0.5rem 0.65rem',
                           borderRadius: '8px',
-                          cursor: isOnline ? 'pointer' : 'not-allowed',
+                          cursor: canInvite ? 'pointer' : 'not-allowed',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          opacity: isOnline ? 1 : 0.65,
+                          opacity: canInvite ? 1 : 0.65,
                         }}
-                        title={isOnline ? 'Undang ke room' : 'Pemain sedang offline'}
+                        title={
+                          inGame
+                            ? 'Pemain sedang bermain'
+                            : canInvite
+                              ? 'Undang ke room'
+                              : 'Pemain sedang offline'
+                        }
                       >
                         <UserPlus size={16} />
                       </button>

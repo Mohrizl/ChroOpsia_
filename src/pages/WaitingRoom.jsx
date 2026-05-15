@@ -10,6 +10,7 @@ import {
   setCurrentRoomCode,
   isUserInRoom,
   getRoomMemberAuthIds,
+  enrichUsersWithGameStatus,
 } from '../lib/roomJoin';
 
 export default function WaitingRoom() {
@@ -183,7 +184,8 @@ export default function WaitingRoom() {
           setSearchResults([]);
         } else {
           const filtered = data.filter((u) => !roomMemberIds.has(u.id));
-          setSearchResults(filtered);
+          const enriched = await enrichUsersWithGameStatus(filtered);
+          setSearchResults(enriched);
         }
       } catch (err) {
         console.error('Search error:', err);
@@ -278,6 +280,11 @@ export default function WaitingRoom() {
     }
     if (!authSession?.user?.id) {
       setInviteToast({ type: 'error', message: 'Login dulu untuk mengirim undangan (bukan guest).' });
+      return;
+    }
+
+    if (targetUser.inGame) {
+      setInviteToast({ type: 'error', message: `${targetUser.name} sedang bermain.` });
       return;
     }
 
@@ -571,7 +578,11 @@ export default function WaitingRoom() {
                   const displayName = targetUser.name;
                   const initial = displayName.charAt(0).toUpperCase();
                   const isOnline = Boolean(globalOnlineUsers[targetUser.id]);
-                  
+                  const inGame = Boolean(targetUser.inGame);
+                  const canInvite = isOnline && !inGame;
+                  const statusLabel = inGame ? 'Sedang Bermain' : isOnline ? 'Online' : 'Offline';
+                  const statusColor = inGame ? '#f59e0b' : isOnline ? 'var(--success)' : 'var(--text-muted)';
+
                   return (
                     <div key={targetUser.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.8rem', background: 'var(--input-bg)', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
@@ -579,11 +590,11 @@ export default function WaitingRoom() {
                           <div style={{ width: '35px', height: '35px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>
                             {initial}
                           </div>
-                          <span style={{ position: 'absolute', bottom: 0, right: 0, width: '10px', height: '10px', borderRadius: '50%', background: isOnline ? 'var(--success)' : '#94a3b8', border: '2px solid var(--bg-color)' }}></span>
+                          <span style={{ position: 'absolute', bottom: 0, right: 0, width: '10px', height: '10px', borderRadius: '50%', background: inGame ? '#f59e0b' : isOnline ? 'var(--success)' : '#94a3b8', border: '2px solid var(--bg-color)' }}></span>
                         </div>
                         <div>
                           <p style={{ fontSize: '0.9rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '150px' }}>{displayName}</p>
-                          <p style={{ fontSize: '0.75rem', color: isOnline ? 'var(--success)' : 'var(--text-muted)', fontWeight: isOnline ? 700 : 500 }}>{isOnline ? 'Online' : 'Offline'}</p>
+                          <p style={{ fontSize: '0.75rem', color: statusColor, fontWeight: inGame || isOnline ? 700 : 500 }}>{statusLabel}</p>
                         </div>
                       </div>
                       <button 
@@ -593,14 +604,20 @@ export default function WaitingRoom() {
                           padding: '0.4rem 0.8rem', 
                           width: 'auto', 
                           fontSize: '0.8rem',
-                          opacity: isOnline ? 1 : 0.55,
-                          cursor: isOnline ? 'pointer' : 'not-allowed',
-                          background: isOnline ? undefined : '#94a3b8',
-                          boxShadow: isOnline ? undefined : 'none',
+                          opacity: canInvite ? 1 : 0.55,
+                          cursor: canInvite ? 'pointer' : 'not-allowed',
+                          background: canInvite ? undefined : '#94a3b8',
+                          boxShadow: canInvite ? undefined : 'none',
                         }} 
-                        disabled={!isOnline}
-                        title={isOnline ? 'Kirim undangan' : 'Pemain offline — tidak bisa diundang'}
-                        onClick={() => isOnline && handleInvite(targetUser)}
+                        disabled={!canInvite}
+                        title={
+                          inGame
+                            ? 'Pemain sedang bermain'
+                            : canInvite
+                              ? 'Kirim undangan'
+                              : 'Pemain offline — tidak bisa diundang'
+                        }
+                        onClick={() => canInvite && handleInvite(targetUser)}
                       >
                         Invite
                       </button>

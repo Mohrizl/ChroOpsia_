@@ -5,6 +5,12 @@ export function inviteBroadcastChannel(userId) {
   return `user-invites:${userId}`;
 }
 
+/** Tolak undangan di DB tanpa UI (penerima sedang bermain). */
+export async function rejectInviteInBackground(inviteId) {
+  if (!inviteId) return;
+  await supabase.from('invites').update({ status: 'rejected' }).eq('id', inviteId);
+}
+
 /**
  * Kirim undangan: insert DB + broadcast ke penerima.
  * @returns {{ ok: boolean, data?: object, error?: Error }}
