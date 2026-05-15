@@ -58,6 +58,7 @@ function App() {
     });
   }, [session?.user?.id]);
 
+  // Presence key = session.user.id → sama dengan players.id / profiles.id / targetUser.id
   useEffect(() => {
     if (!session?.user?.id) return;
     startGlobalPresence(session.user.id);

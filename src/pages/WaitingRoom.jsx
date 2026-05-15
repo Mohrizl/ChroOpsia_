@@ -3,8 +3,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Users, Crown, CheckCircle, UserMinus, ArrowLeft, Loader2, Send, MessageCircle, Palette, Eye, UserPlus, X, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { searchProfiles } from '../lib/profileSync';
-import { sendGameInvite } from '../lib/invites';
+import { broadcastInviteToUser } from '../lib/invites';
 import { useOnlineUsers } from '../hooks/useOnlineUsers';
+import InviteToast from '../components/InviteToast';
 
 export default function WaitingRoom() {
   const navigate = useNavigate();
@@ -243,35 +244,44 @@ export default function WaitingRoom() {
     navigate(`/game/${selectedGameType}`, { state: { ...location.state, gameType: selectedGameType, numQuestions: room.num_questions || 14 } });
   };
 
-  const handleInvite = async (user) => {
+  const handleInvite = async (targetUser) => {
     if (!roomCode) {
       setInviteToast({ type: 'error', message: 'Room code tidak tersedia.' });
       return;
     }
-    const { data: liveSession } = await supabase.auth.getSession();
-    const fromId = liveSession?.session?.user?.id || authSession?.user?.id;
-    if (!fromId) {
+    if (!authSession?.user?.id) {
       setInviteToast({ type: 'error', message: 'Login dulu untuk mengirim undangan (bukan guest).' });
       return;
     }
-    const result = await sendGameInvite({
-      fromId,
-      toId: user.id,
-      roomCode,
-      senderName: playerName,
+
+    const isOnline = globalOnlineUsers[targetUser.id];
+    if (!isOnline) {
+      setInviteToast({ type: 'error', message: `${targetUser.name} sedang offline.` });
+      return;
+    }
+
+    const { error } = await supabase.from('invites').insert({
+      from_id: authSession.user.id,
+      to_id: targetUser.id,
+      room_code: roomCode,
+      status: 'pending',
     });
-    if (!result.ok) {
-      const msg = result.error?.message || 'Gagal menyimpan undangan.';
+
+    if (error) {
       setInviteToast({
         type: 'error',
-        message: `${msg} (cek policy INSERT invites: from_id = auth.uid())`,
+        message: error.message || 'Gagal mengirim undangan.',
       });
       return;
     }
-    setInviteToast({
-      type: 'success',
-      message: `Undangan terkirim ke ${user.name}. ID: ${result.data?.id?.slice(0, 8)}…`,
+
+    await broadcastInviteToUser(targetUser.id, {
+      room_code: roomCode,
+      senderName: playerName,
+      from_id: authSession.user.id,
     });
+
+    setInviteToast({ type: 'success', message: `Undangan terkirim ke ${targetUser.name}.` });
   };
 
   if (error) return (
@@ -330,33 +340,7 @@ export default function WaitingRoom() {
         @media (max-width: 768px) { .waiting-panel { padding: 4rem 1.2rem 2rem; } .waiting-title { font-size: 2rem !important; } .back-btn-wr { top: 1rem !important; left: 1rem !important; } }
       `}</style>
 
-      {inviteToast && (
-        <div
-          role="status"
-          style={{
-            position: 'fixed',
-            bottom: '1.25rem',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 10050,
-            maxWidth: 'min(92vw, 380px)',
-            padding: '0.85rem 1.1rem',
-            borderRadius: '14px',
-            fontSize: '0.9rem',
-            fontWeight: 600,
-            boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
-            border:
-              inviteToast.type === 'success'
-                ? '1px solid rgba(34, 197, 94, 0.45)'
-                : '1px solid rgba(239, 68, 68, 0.45)',
-            background:
-              inviteToast.type === 'success' ? 'rgba(22, 163, 74, 0.18)' : 'rgba(239, 68, 68, 0.14)',
-            color: inviteToast.type === 'success' ? 'var(--success)' : 'var(--danger)',
-          }}
-        >
-          {inviteToast.message}
-        </div>
-      )}
+      <InviteToast toast={inviteToast} />
 
       <div className="waiting-grid">
         <div className="glass-panel waiting-panel">
@@ -551,13 +535,13 @@ export default function WaitingRoom() {
               ) : searchResults.length === 0 ? (
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>Tidak ada akun ditemukan. Pastikan tabel profiles sudah dibuat dan user sudah login minimal sekali.</p>
               ) : (
-                searchResults.map((u) => {
-                  const displayName = u.name;
+                searchResults.map((targetUser) => {
+                  const displayName = targetUser.name;
                   const initial = displayName.charAt(0).toUpperCase();
-                  const isOnline = Boolean(globalOnlineUsers[u.id]);
+                  const isOnline = Boolean(globalOnlineUsers[targetUser.id]);
                   
                   return (
-                    <div key={u.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.8rem', background: 'var(--input-bg)', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                    <div key={targetUser.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.8rem', background: 'var(--input-bg)', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                         <div style={{ position: 'relative' }}>
                           <div style={{ width: '35px', height: '35px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold' }}>
@@ -584,7 +568,7 @@ export default function WaitingRoom() {
                         }} 
                         disabled={!isOnline}
                         title={isOnline ? 'Kirim undangan' : 'Pemain offline — tidak bisa diundang'}
-                        onClick={() => isOnline && handleInvite(u)}
+                        onClick={() => isOnline && handleInvite(targetUser)}
                       >
                         Invite
                       </button>

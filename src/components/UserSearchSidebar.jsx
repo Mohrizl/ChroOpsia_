@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Search, UserPlus, X, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { searchProfiles } from '../lib/profileSync';
-import { sendGameInvite } from '../lib/invites';
+import { broadcastInviteToUser } from '../lib/invites';
 import { useOnlineUsers } from '../hooks/useOnlineUsers';
+import InviteToast from './InviteToast';
 import { useLocation } from 'react-router-dom';
 
 export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: roomCodeProp }) {
@@ -11,7 +12,7 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [inviteToast, setInviteToast] = useState(null);
-  const onlineUsers = useOnlineUsers(isOpen);
+  const globalOnlineUsers = useOnlineUsers(isOpen);
   const [searchError, setSearchError] = useState(null);
   const location = useLocation();
 
@@ -62,20 +63,32 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
       return;
     }
 
-    const result = await sendGameInvite({
-      fromId: session.user.id,
-      toId: targetUser.id,
-      roomCode,
-      senderName: playerName,
+    const isOnline = globalOnlineUsers[targetUser.id];
+    if (!isOnline) {
+      setInviteToast({ type: 'error', message: `${targetUser.name} sedang offline.` });
+      return;
+    }
+
+    const { error } = await supabase.from('invites').insert({
+      from_id: session.user.id,
+      to_id: targetUser.id,
+      room_code: roomCode,
+      status: 'pending',
     });
 
-    if (!result.ok) {
+    if (error) {
       setInviteToast({
         type: 'error',
-        message: result.error?.message || 'Gagal menyimpan undangan ke database.',
+        message: error.message || 'Gagal mengirim undangan.',
       });
       return;
     }
+
+    await broadcastInviteToUser(targetUser.id, {
+      room_code: roomCode,
+      senderName: playerName,
+      from_id: session.user.id,
+    });
 
     setInviteToast({ type: 'success', message: `Undangan terkirim ke ${targetUser.name}.` });
   };
@@ -84,33 +97,7 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
 
   return (
     <>
-      {inviteToast && (
-        <div
-          role="status"
-          style={{
-            position: 'fixed',
-            bottom: '1.25rem',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 10050,
-            maxWidth: 'min(92vw, 380px)',
-            padding: '0.85rem 1.1rem',
-            borderRadius: '14px',
-            fontSize: '0.9rem',
-            fontWeight: 600,
-            boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
-            border:
-              inviteToast.type === 'success'
-                ? '1px solid rgba(34, 197, 94, 0.45)'
-                : '1px solid rgba(239, 68, 68, 0.45)',
-            background:
-              inviteToast.type === 'success' ? 'rgba(22, 163, 74, 0.18)' : 'rgba(239, 68, 68, 0.14)',
-            color: inviteToast.type === 'success' ? 'var(--success)' : 'var(--danger)',
-          }}
-        >
-          {inviteToast.message}
-        </div>
-      )}
+      <InviteToast toast={inviteToast} />
 
       {/* Sidebar Overlay */}
       {isOpen && (
@@ -241,14 +228,14 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
             )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-              {results.map((u) => {
-                const displayName = u.name || 'Unknown Player';
+              {results.map((targetUser) => {
+                const displayName = targetUser.name || 'Unknown Player';
                 const initial = displayName.charAt(0).toUpperCase();
-                const isOnline = Boolean(onlineUsers[u.id]);
+                const isOnline = Boolean(globalOnlineUsers[targetUser.id]);
 
                 return (
                   <div
-                    key={u.id}
+                    key={targetUser.id}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -321,7 +308,7 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
                     {roomCode && (
                       <button
                         type="button"
-                        onClick={() => isOnline && handleInvite(u)}
+                        onClick={() => isOnline && handleInvite(targetUser)}
                         disabled={!isOnline}
                         style={{
                           background: isOnline ? 'var(--primary-glow)' : 'rgba(148, 163, 184, 0.2)',

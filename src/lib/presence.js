@@ -5,13 +5,9 @@ export function presenceStateToOnlineIds(state) {
   const ids = {};
   if (!state || typeof state !== 'object') return ids;
 
-  Object.entries(state).forEach(([key, presences]) => {
+  // Key channel = session.user.id (sama dengan players.id / profiles.id / targetUser.id)
+  Object.keys(state).forEach((key) => {
     if (key && key !== 'undefined') ids[key] = true;
-    if (Array.isArray(presences)) {
-      presences.forEach((p) => {
-        if (p?.user_id) ids[p.user_id] = true;
-      });
-    }
   });
   return ids;
 }
@@ -50,7 +46,6 @@ export function startGlobalPresence(userId) {
   const trackSelf = async () => {
     if (!channel) return;
     await channel.track({
-      user_id: userId,
       online_at: new Date().toISOString(),
     });
     push();
