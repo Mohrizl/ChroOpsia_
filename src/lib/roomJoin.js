@@ -23,39 +23,6 @@ export async function isUserInRoom(userId, roomCode) {
   return Boolean(data);
 }
 
-/**
- * Sedang dalam sesi aktif: punya baris players dengan room_code terisi & belum selesai.
- * (Termasuk saat bermain di game — finished masih false.)
- */
-export async function isUserInActivePlayerSession(userId) {
-  if (!userId) return false;
-  const { data } = await supabase
-    .from('players')
-    .select('id')
-    .eq('id', userId)
-    .eq('finished', false)
-    .not('room_code', 'is', null)
-    .maybeSingle();
-  return Boolean(data);
-}
-
-/** Tandai hasil pencarian: inGame jika memenuhi kondisi di atas. */
-export async function enrichUsersWithGameStatus(users) {
-  if (!users?.length) return [];
-  const ids = users.map((u) => u.id).filter(Boolean);
-  if (!ids.length) return users.map((u) => ({ ...u, inGame: false }));
-
-  const { data: rows } = await supabase
-    .from('players')
-    .select('id')
-    .in('id', ids)
-    .eq('finished', false)
-    .not('room_code', 'is', null);
-
-  const inGameIds = new Set((rows || []).map((r) => r.id));
-  return users.map((u) => ({ ...u, inGame: inGameIds.has(u.id) }));
-}
-
 /** UUID auth semua pemain manusia di room (untuk filter undangan). */
 export async function getRoomMemberAuthIds(roomCode) {
   if (!roomCode) return new Set();

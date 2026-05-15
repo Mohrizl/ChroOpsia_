@@ -15,13 +15,7 @@ import { supabase } from './lib/supabase';
 import { ensureUserProfile } from './lib/profileSync';
 import { startGlobalPresence, stopGlobalPresence } from './lib/presence';
 import { subscribeToIncomingInvites } from './lib/invites';
-import {
-  joinRoomAsPlayer,
-  isUserInRoom,
-  getCurrentRoomCode,
-  isUserInActivePlayerSession,
-} from './lib/roomJoin';
-import { rejectInviteInBackground } from './lib/invites';
+import { joinRoomAsPlayer, isUserInRoom, getCurrentRoomCode } from './lib/roomJoin';
 
 function App() {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -63,11 +57,6 @@ function App() {
       const currentRoom = getCurrentRoomCode();
       if (currentRoom === invite.roomCode) return;
       if (await isUserInRoom(session.user.id, invite.roomCode)) return;
-
-      if (await isUserInActivePlayerSession(session.user.id)) {
-        await rejectInviteInBackground(invite.inviteId);
-        return;
-      }
 
       const key = `${invite.inviteId || ''}:${invite.roomCode}:${invite.fromId}`;
       if (lastInviteKeyRef.current === key) return;
