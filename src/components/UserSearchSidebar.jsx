@@ -3,6 +3,7 @@ import { Search, UserPlus, X, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { searchProfiles } from '../lib/profileSync';
 import { broadcastInviteToUser } from '../lib/invites';
+import { isUserInRoom } from '../lib/roomJoin';
 import { useOnlineUsers } from '../hooks/useOnlineUsers';
 import InviteToast from './InviteToast';
 import { useLocation } from 'react-router-dom';
@@ -66,6 +67,11 @@ export default function UserSearchSidebar({ session, isOpen, onClose, roomCode: 
     const isOnline = globalOnlineUsers[targetUser.id];
     if (!isOnline) {
       setInviteToast({ type: 'error', message: `${targetUser.name} sedang offline.` });
+      return;
+    }
+
+    if (await isUserInRoom(targetUser.id, roomCode)) {
+      setInviteToast({ type: 'error', message: `${targetUser.name} sudah ada di room ini.` });
       return;
     }
 

@@ -6,6 +6,11 @@ import { searchProfiles } from '../lib/profileSync';
 import { broadcastInviteToUser } from '../lib/invites';
 import { useOnlineUsers } from '../hooks/useOnlineUsers';
 import InviteToast from '../components/InviteToast';
+import {
+  setCurrentRoomCode,
+  isUserInRoom,
+  getRoomMemberAuthIds,
+} from '../lib/roomJoin';
 
 export default function WaitingRoom() {
   const navigate = useNavigate();
@@ -29,6 +34,7 @@ export default function WaitingRoom() {
   const globalOnlineUsers = useOnlineUsers(showInviteModal);
   const [inviteToast, setInviteToast] = useState(null);
   const [searchError, setSearchError] = useState(null);
+  const [roomMemberIds, setRoomMemberIds] = useState(new Set());
   const chatEndRef = useRef(null);
   const channelRef = useRef(null);
 
@@ -71,6 +77,21 @@ export default function WaitingRoom() {
     const t = setTimeout(() => setInviteToast(null), 3200);
     return () => clearTimeout(t);
   }, [inviteToast]);
+
+  useEffect(() => {
+    if (!roomCode) return;
+    setCurrentRoomCode(roomCode);
+    return () => {
+      if (sessionStorage.getItem('chro_current_room') === roomCode) {
+        setCurrentRoomCode(null);
+      }
+    };
+  }, [roomCode]);
+
+  useEffect(() => {
+    if (!showInviteModal || !roomCode) return;
+    getRoomMemberAuthIds(roomCode).then(setRoomMemberIds);
+  }, [showInviteModal, roomCode, players]);
 
   useEffect(() => {
     if (!roomCode) return;
@@ -161,7 +182,8 @@ export default function WaitingRoom() {
           );
           setSearchResults([]);
         } else {
-          setSearchResults(data);
+          const filtered = data.filter((u) => !roomMemberIds.has(u.id));
+          setSearchResults(filtered);
         }
       } catch (err) {
         console.error('Search error:', err);
@@ -173,7 +195,7 @@ export default function WaitingRoom() {
 
     const timer = setTimeout(searchUsers, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery, authSession?.user?.id]);
+  }, [searchQuery, authSession?.user?.id, roomMemberIds]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -201,7 +223,12 @@ export default function WaitingRoom() {
   };
 
   const handleLeaveRoom = async () => {
-    await supabase.from('players').delete().eq('room_code', roomCode).eq('name', playerName);
+    if (authSession?.user?.id) {
+      await supabase.from('players').delete().eq('room_code', roomCode).eq('id', authSession.user.id);
+    } else {
+      await supabase.from('players').delete().eq('room_code', roomCode).eq('name', playerName);
+    }
+    setCurrentRoomCode(null);
     const { data: remainingPlayers } = await supabase.from('players').select('is_bot').eq('room_code', roomCode);
     const humans = (remainingPlayers || []).filter(p => !p.is_bot);
     
@@ -257,6 +284,11 @@ export default function WaitingRoom() {
     const isOnline = globalOnlineUsers[targetUser.id];
     if (!isOnline) {
       setInviteToast({ type: 'error', message: `${targetUser.name} sedang offline.` });
+      return;
+    }
+
+    if (roomMemberIds.has(targetUser.id) || (await isUserInRoom(targetUser.id, roomCode))) {
+      setInviteToast({ type: 'error', message: `${targetUser.name} sudah ada di room ini.` });
       return;
     }
 

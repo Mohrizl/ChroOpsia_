@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Globe, ArrowRight, User, ArrowLeft } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { setCurrentRoomCode } from '../lib/roomJoin';
 
 export default function Lobby() {
   const navigate = useNavigate();
@@ -94,15 +95,27 @@ export default function Lobby() {
       const { count } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('room_code', codeToJoin);
       if (count >= 8) { setError('Room is full'); return; }
 
-      const { error: joinError } = await supabase.from('players').insert([{
-        room_code: codeToJoin, name: playerName.trim(), ready: false, score: 0, current_question: 1, finished: false
-      }]);
+      const { data: authData } = await supabase.auth.getSession();
+      const authId = authData?.session?.user?.id;
+      const playerRow = {
+        room_code: codeToJoin,
+        name: playerName.trim(),
+        ready: false,
+        score: 0,
+        current_question: 1,
+        finished: false,
+        is_bot: false,
+      };
+      if (authId) playerRow.id = authId;
+
+      const { error: joinError } = await supabase.from('players').insert([playerRow]);
 
       if (joinError) {
         if (joinError.code === '23505') setError('Name already taken in this room');
         else throw joinError;
         return;
       }
+      setCurrentRoomCode(codeToJoin);
       navigate('/waiting-room', { state: { roomCode: codeToJoin, playerName: playerName.trim(), isHost: false } });
     } catch (err) { setError('Failed to join room'); }
   };
@@ -112,7 +125,19 @@ export default function Lobby() {
     const code = generateRoomCode(type);
     try {
       await supabase.from('rooms').insert([{ code, type, host_name: playerName.trim(), status: 'waiting', game_type: 'color-race', time_limit: 20, num_questions: 14 }]);
-      await supabase.from('players').insert([{ room_code: code, name: playerName.trim(), ready: true, score: 0, current_question: 1, finished: false }]);
+      const { data: authData } = await supabase.auth.getSession();
+      const hostRow = {
+        room_code: code,
+        name: playerName.trim(),
+        ready: true,
+        score: 0,
+        current_question: 1,
+        finished: false,
+        is_bot: false,
+      };
+      if (authData?.session?.user?.id) hostRow.id = authData.session.user.id;
+      await supabase.from('players').insert([hostRow]);
+      setCurrentRoomCode(code);
       navigate('/waiting-room', { state: { roomCode: code, playerName: playerName.trim(), isHost: true } });
     } catch (err) { setError('Failed to create room'); }
   };

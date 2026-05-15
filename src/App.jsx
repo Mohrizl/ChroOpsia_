@@ -15,16 +15,22 @@ import { supabase } from './lib/supabase';
 import { ensureUserProfile } from './lib/profileSync';
 import { startGlobalPresence, stopGlobalPresence } from './lib/presence';
 import { subscribeToIncomingInvites } from './lib/invites';
+import { joinRoomAsPlayer, isUserInRoom, getCurrentRoomCode } from './lib/roomJoin';
 
 function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [session, setSession] = useState(null);
   const [incomingInvite, setIncomingInvite] = useState(null);
+  const [inviteJoinError, setInviteJoinError] = useState(null);
+  const [acceptingInvite, setAcceptingInvite] = useState(false);
   const audioRef = useRef(null);
   const lastInviteKeyRef = useRef(null);
   const navigate = useNavigate();
 
-  const dismissInvite = useCallback(() => setIncomingInvite(null), []);
+  const dismissInvite = useCallback(() => {
+    setIncomingInvite(null);
+    setInviteJoinError(null);
+  }, []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -47,10 +53,15 @@ function App() {
 
   useEffect(() => {
     if (!session?.user?.id) return;
-    return subscribeToIncomingInvites(session.user.id, (invite) => {
+    return subscribeToIncomingInvites(session.user.id, async (invite) => {
+      const currentRoom = getCurrentRoomCode();
+      if (currentRoom === invite.roomCode) return;
+      if (await isUserInRoom(session.user.id, invite.roomCode)) return;
+
       const key = `${invite.inviteId || ''}:${invite.roomCode}:${invite.fromId}`;
       if (lastInviteKeyRef.current === key) return;
       lastInviteKeyRef.current = key;
+      setInviteJoinError(null);
       setIncomingInvite(invite);
       setTimeout(() => {
         if (lastInviteKeyRef.current === key) lastInviteKeyRef.current = null;
@@ -88,18 +99,27 @@ function App() {
     setIsPlaying(!isPlaying);
   };
 
-  const acceptIncomingInvite = () => {
-    if (!incomingInvite?.roomCode || !session?.user) return;
-    const displayName =
-      session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Player';
+  const acceptIncomingInvite = async () => {
+    if (!incomingInvite?.roomCode || !session?.user || acceptingInvite) return;
+    setAcceptingInvite(true);
+    setInviteJoinError(null);
+
+    const result = await joinRoomAsPlayer(session, incomingInvite.roomCode);
+    if (!result.ok) {
+      setInviteJoinError(result.error?.message || 'Gagal masuk ke room.');
+      setAcceptingInvite(false);
+      return;
+    }
+
     navigate('/waiting-room', {
       state: {
         roomCode: incomingInvite.roomCode,
-        playerName: displayName,
+        playerName: result.playerName,
         isHost: false,
       },
     });
     setIncomingInvite(null);
+    setAcceptingInvite(false);
   };
 
   return (
@@ -173,9 +193,18 @@ function App() {
             >
               {incomingInvite.roomCode}
             </div>
+            {inviteJoinError && (
+              <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginBottom: '1rem' }}>{inviteJoinError}</p>
+            )}
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <button type="button" className="btn btn-primary" style={{ flex: 1, minWidth: '120px' }} onClick={acceptIncomingInvite}>
-                Terima & masuk ruang
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ flex: 1, minWidth: '120px' }}
+                disabled={acceptingInvite}
+                onClick={acceptIncomingInvite}
+              >
+                {acceptingInvite ? 'Memproses…' : 'Terima & masuk ruang'}
               </button>
               <button type="button" className="btn btn-secondary" style={{ flex: 1, minWidth: '120px' }} onClick={dismissInvite}>
                 Tolak
