@@ -39,6 +39,7 @@ export default function WaitingRoom() {
   const [roomMemberIds, setRoomMemberIds] = useState(new Set());
   const chatEndRef = useRef(null);
   const channelRef = useRef(null);
+  const isLeavingRef = useRef(false);
 
   // Menyimpan data player aktif ke ref agar selalu mendapatkan snapshot terbaru di dalam callback realtime
   const playersRef = useRef(players);
@@ -132,6 +133,7 @@ export default function WaitingRoom() {
 
   useEffect(() => {
     if (!roomCode) return;
+    isLeavingRef.current = false;
     fetchRoomData();
 
     const channel = supabase.channel(`room-channel-${roomCode}`, {
@@ -157,12 +159,18 @@ export default function WaitingRoom() {
         if (payload.eventType === 'DELETE') {
           const oldP = payload.old;
 
+          // Ambil data dari cache state lokal
           const targetPlayer = playersRef.current.find(p => String(p.id) === String(oldP.id));
 
           if (targetPlayer) {
-            const isMeKicked = targetPlayer.name === playerNameRef.current;
+            // 1. Validasi: Pastikan data player yang dihapus ini memang berasal dari room yang kita tempati sekarang
+            const isFromCurrentRoom = targetPlayer.room_code === roomCode;
 
-            if (isMeKicked) {
+            // 2. Validasi: Apakah nama player yang dihapus adalah nama kita sendiri
+            const isMe = targetPlayer.name === playerNameRef.current;
+
+            // Eksekusi kick HANYA jika berasal dari room saat ini, datanya kita, dan kita tidak sedang menekan tombol keluar
+            if (isFromCurrentRoom && isMe && !isLeavingRef.current) {
               sessionStorage.removeItem('chro_current_room');
               supabase.removeChannel(channel);
               alert("Kamu telah dikeluarkan dari room oleh host.");
@@ -171,6 +179,7 @@ export default function WaitingRoom() {
             }
           }
         }
+
         fetchRoomData();
       })
       .on('broadcast', { event: 'chat' }, (payload) => {
@@ -278,11 +287,15 @@ export default function WaitingRoom() {
   };
 
   const handleLeaveRoom = async () => {
+    // Tandai bahwa kita keluar atas kemauan sendiri
+    isLeavingRef.current = true;
+
     if (session?.user?.id) {
       await supabase.from('players').delete().eq('room_code', roomCode).eq('id', session.user.id);
     } else {
       await supabase.from('players').delete().eq('room_code', roomCode).eq('name', playerName);
     }
+
     setCurrentRoomCode(null);
     const { data: remainingPlayers } = await supabase.from('players').select('name').eq('room_code', roomCode);
 
