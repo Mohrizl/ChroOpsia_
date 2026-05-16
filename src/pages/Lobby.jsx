@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Lock, Globe, ArrowRight, User, ArrowLeft, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { joinRoomAsPlayer, createRoomAsPlayer, getSessionPlayerName, isUserInGame } from '../lib/roomJoin';
 
 export default function Lobby() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [playerName, setPlayerName] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [error, setError] = useState('');
@@ -15,34 +16,43 @@ export default function Lobby() {
 
   // Sync session and playerName
   useEffect(() => {
+    // Check if state was passed from Home.jsx (for guest play)
+    if (location.state?.playerName) {
+      setPlayerName(location.state.playerName);
+    }
+
     // Initial session
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       setSession(s);
-      setPlayerName(getSessionPlayerName(s));
+      if (!location.state?.playerName) {
+        setPlayerName(getSessionPlayerName(s));
+      }
     });
 
     // Listen to changes (login/logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
-      setPlayerName(getSessionPlayerName(s));
+      if (!location.state?.playerName) {
+        setPlayerName(getSessionPlayerName(s));
+      }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [location.state]);
 
   const fetchRooms = async () => {
     try {
       // Optimasi cleanup: Hanya hapus room yang benar-benar kosong dan statusnya masih waiting
       const { data: roomsWithPlayers } = await supabase
         .from('rooms')
-        .select('id, created_at, players(is_bot)')
+        .select('id, created_at, players')
         .eq('status', 'waiting');
 
       if (roomsWithPlayers) {
         for (const r of roomsWithPlayers) {
-          const hasHumans = r.players && r.players.some(p => !p.is_bot);
+          const hasPlayers = r.players && r.players.length > 0;
           const isOld = (Date.now() - new Date(r.created_at).getTime()) > 45 * 1000;
-          if (!hasHumans && isOld) {
+          if (!hasPlayers && isOld) {
             await supabase.from('rooms').delete().eq('id', r.id);
           }
         }
@@ -92,20 +102,23 @@ export default function Lobby() {
     setError('');
 
     try {
-      // isUserInGame sekarang hanya memblokir jika status room = 'playing'
       if (session?.user?.id && await isUserInGame(session.user.id)) {
         setError('Kamu sedang dalam permainan yang sedang berlangsung.');
         setLoading(false);
         return;
       }
 
-      const result = await joinRoomAsPlayer(session, codeToJoin);
+      // Ambil nama guest yang valid dari state
+      const isGuest = localStorage.getItem('isGuest') === 'true';
+      const result = await joinRoomAsPlayer(session, codeToJoin, playerName);
+      
       if (result.ok) {
         navigate('/waiting-room', { 
           state: { 
             roomCode: codeToJoin, 
             playerName: result.playerName, 
-            isHost: false 
+            isHost: false,
+            isGuest
           } 
         });
       } else {
@@ -131,13 +144,16 @@ export default function Lobby() {
         return;
       }
 
-      const result = await createRoomAsPlayer(session, type);
+      const isGuest = localStorage.getItem('isGuest') === 'true';
+      const result = await createRoomAsPlayer(session, type, {}, playerName);
+      
       if (result.ok) {
         navigate('/waiting-room', { 
           state: { 
             roomCode: result.roomCode, 
             playerName: result.playerName, 
-            isHost: true 
+            isHost: true,
+            isGuest
           } 
         });
       } else {

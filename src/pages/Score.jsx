@@ -1,17 +1,45 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Trophy, RotateCcw, Home, Crown } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useState, useEffect } from 'react';
 
 export default function Score() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { score, mode, roomCode, playerName, allPlayers, wrongCount, correctCount, numQuestions } = location.state || { score: 0, mode: 'Unknown' };
+  const { score, mode, roomCode, playerName, allPlayers: initialPlayers, wrongCount, correctCount, numQuestions } = location.state || { score: 0, mode: 'Unknown' };
   const total = numQuestions || (mode === 'Ishihara Test' ? 14 : 14);
 
-  // Use passed allPlayers or mock if missing
-  const leaderboard = allPlayers || [
-    { name: playerName || 'You', score: score },
-  ];
+  // State untuk menampung data pemain secara realtime jika ada di dalam room
+  const [leaderboard, setLeaderboard] = useState(initialPlayers || [{ name: playerName || 'You', score: score }]);
+
+  // Ambil data terbaru secara realtime khusus jika bermain dalam mode Room Multiplayer
+  useEffect(() => {
+    if (!roomCode) return;
+
+    // 1. Ambil data pertama kali saat halaman di-load
+    const fetchFinalStandings = async () => {
+      const { data } = await supabase.from('players').select('*').eq('room_code', roomCode);
+      if (data && data.length > 0) {
+        setLeaderboard([...data].sort((a, b) => b.score - a.score));
+      }
+    };
+    fetchFinalStandings();
+
+    // 2. Dengarkan perubahan data jika ada player terlambat yang baru masuk ke halaman score
+    const channel = supabase.channel('score-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` },
+        () => {
+          fetchFinalStandings();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [roomCode]);
 
   const isWinner = roomCode && leaderboard[0]?.name === (playerName || 'You');
 

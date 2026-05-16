@@ -20,6 +20,7 @@ import { joinRoomAsPlayer, isUserInRoom, getCurrentRoomCode, isUserInGame } from
 function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [session, setSession] = useState(null);
+  const [isGuest, setIsGuest] = useState(localStorage.getItem('isGuest') === 'true');
   const [incomingInvite, setIncomingInvite] = useState(null);
   const [inviteJoinError, setInviteJoinError] = useState(null);
   const [acceptingInvite, setAcceptingInvite] = useState(false);
@@ -112,7 +113,11 @@ function App() {
   };
 
   const acceptIncomingInvite = async () => {
-    if (!incomingInvite?.roomCode || !session?.user || acceptingInvite) return;
+
+    const isGuestSession = localStorage.getItem('isGuest') === 'true';
+    if (!incomingInvite?.roomCode || acceptingInvite) return;
+    if (!session?.user && !isGuestSession) return;
+
     setAcceptingInvite(true);
     setInviteJoinError(null);
 
@@ -133,6 +138,14 @@ function App() {
     setIncomingInvite(null);
     setAcceptingInvite(false);
   };
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setIsGuest(localStorage.getItem('isGuest') === 'true');
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   return (
     <ThemeProvider>
@@ -224,10 +237,11 @@ function App() {
       <GlobalControls isPlaying={isPlaying} toggleMusic={toggleMusic} session={session} />
 
       <Routes>
-        <Route path="/" element={<Login session={session} />} />
+        <Route path="/" element={<Login session={session} setIsGuest={setIsGuest} />} />
         <Route path="/signup" element={<SignUp />} />
 
-        {session ? (
+        {/* IZINKAN AKSES JIKA ADA SESSION USER ATAU MASUK SEBAGAI GUEST */}
+        {session || isGuest ? (
           <>
             <Route path="/home" element={<Home session={session} />} />
             <Route path="/lobby" element={<Lobby session={session} />} />
@@ -238,7 +252,7 @@ function App() {
             <Route path="/score" element={<Score session={session} />} />
           </>
         ) : (
-          <Route path="*" element={<Login session={session} />} />
+          <Route path="*" element={<Login session={session} setIsGuest={setIsGuest} />} />
         )}
       </Routes>
     </ThemeProvider>

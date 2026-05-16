@@ -10,8 +10,9 @@ export default function Home() {
   const [isGuest, setIsGuest] = useState(false);
 
   useEffect(() => {
+    const isGuestSession = localStorage.getItem('isGuest') === 'true';
+
     supabase.auth.getSession().then(({ data: { session } }) => {
-      const isGuestSession = localStorage.getItem('isGuest') === 'true';
       if (session?.user) {
         setUser(session.user);
         setIsGuest(false);
@@ -23,18 +24,30 @@ export default function Home() {
       } else {
         setUser(null);
         setIsGuest(isGuestSession);
+
+        // Ambil nama guest yang sudah ada atau bikin baru
         const guestName = localStorage.getItem('guestName') || `Guest_${Math.floor(Math.random() * 1000)}`;
         setPlayerName(guestName);
         if (isGuestSession) localStorage.setItem('guestName', guestName);
       }
     });
+
+    // 2. Jika di App.jsx sudah terdeteksi Guest, paksa state lokal langsung True
+    if (isGuestSession) {
+      setIsGuest(true);
+      const savedName = localStorage.getItem('guestName') || 'Guest_Player';
+      setPlayerName(savedName);
+    }
   }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     localStorage.removeItem('isGuest');
     localStorage.removeItem('guestName');
+
+    // Alihkan ke login dan segarkan halaman agar semua state bersih total
     navigate('/');
+    window.location.reload();
   };
 
   return (
@@ -42,7 +55,7 @@ export default function Home() {
       <div className="hero-section glass-panel">
         <h1 className="title text-gradient">ChroOpsia</h1>
         <p className="subtitle">The Ultimate Color Vision Challenge</p>
-        
+
         {user && !isGuest && (
           <div style={{ marginBottom: '2rem', padding: '1rem', background: 'var(--input-bg)', borderRadius: '16px' }}>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Welcome back,</p>
@@ -69,26 +82,26 @@ export default function Home() {
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%', maxWidth: '380px', margin: '0 auto' }}>
-          <button 
-            className="btn btn-primary" 
+          <button
+            className="btn btn-primary"
             style={{ padding: '1rem', borderRadius: '18px', fontSize: '1rem', gap: '0.75rem' }}
             onClick={() => navigate('/select-mode', { state: { mode: 'solo', playerName, isGuest } })}
           >
             <Play size={20} />
             Play Solo
           </button>
-          <button 
+          <button
             className="btn btn-secondary"
             style={{ padding: '1rem', borderRadius: '18px', fontSize: '1rem', gap: '0.75rem' }}
-            onClick={() => navigate('/lobby')}
+            onClick={() => navigate('/lobby', { state: { playerName, isGuest } })}
           >
             <Users size={20} />
             Multiplayer Room
           </button>
 
           {(isGuest || user) && (
-            <button 
-              className="btn btn-secondary" 
+            <button
+              className="btn btn-secondary"
               onClick={handleLogout}
               style={{ marginTop: '1rem', border: 'none', background: 'transparent', color: 'var(--danger)', gap: '0.75rem' }}
             >

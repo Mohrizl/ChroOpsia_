@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Mail, Lock, User, Play, Loader2, Globe, Eye, EyeOff } from 'lucide-react';
 
-export default function Login() {
+// PASTIKAN { setIsGuest } DITANGKAP DI SINI SEBAGAI PROPS
+export default function Login({ setIsGuest }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -18,6 +19,12 @@ export default function Login() {
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
+
+      // Bersihkan data guest terdahulu jika login akun sukses
+      localStorage.removeItem('isGuest');
+      localStorage.removeItem('guestName');
+      if (typeof setIsGuest === 'function') setIsGuest(false);
+
       navigate('/home');
     } catch (err) {
       setError(err.message);
@@ -29,6 +36,11 @@ export default function Login() {
   const handleGoogleLogin = async () => {
     setLoading(true);
     try {
+      // Bersihkan data guest terdahulu sebelum dialihkan ke Google
+      localStorage.removeItem('isGuest');
+      localStorage.removeItem('guestName');
+      if (typeof setIsGuest === 'function') setIsGuest(false);
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -43,10 +55,16 @@ export default function Login() {
   };
 
   const handleGuestPlay = () => {
-    // For guest play, we can just navigate to the next screen.
-    // Optionally, we could set a "guest" flag in localStorage or context.
+    // 1. Set data guest ke local storage
     localStorage.setItem('isGuest', 'true');
     localStorage.setItem('guestName', `Guest_${Math.floor(Math.random() * 1000)}`);
+
+    // 2. Beritahu App.jsx secara real-time bahwa sekarang menggunakan Guest
+    if (typeof setIsGuest === 'function') {
+      setIsGuest(true);
+    }
+
+    // 3. Alihkan ke halaman home
     navigate('/home');
   };
 
@@ -94,7 +112,7 @@ export default function Login() {
                 style={{ paddingLeft: '3rem', paddingRight: '3rem' }}
                 required
               />
-              <button 
+              <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}

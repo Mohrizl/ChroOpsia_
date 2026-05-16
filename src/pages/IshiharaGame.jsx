@@ -104,6 +104,12 @@ export default function IshiharaGame() {
         });
       }, 500);
     }
+    
+    // Check if all players are finished and update room status
+    if (rData?.status === 'playing' && sorted.length > 0 && sorted.every(p => p.finished)) {
+      await supabase.from('rooms').update({ status: 'finished' }).eq('code', roomCode);
+    }
+    
     return { players: sorted, room: rData };
   }, [roomCode, navigate, location.state]);
 
@@ -124,45 +130,27 @@ export default function IshiharaGame() {
   useEffect(() => {
     if (!roomCode) return;
     fetchGameState();
-    const channel = supabase.channel(`game-${roomCode}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, () => { fetchGameState(); })
+    const channel = supabase.channel(`game-${roomCode}`, {
+      config: {
+        broadcast: { self: true }
+      }
+    })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, (payload) => {
+        // Update local state immediately for better real-time feel
+        if (payload.new && payload.new.name === playerName) {
+          setScore(payload.new.score);
+          setCorrectCount(payload.new.correct_count || 0);
+          setWrongCount(payload.new.wrong_count || 0);
+        }
+        fetchGameState();
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` }, (payload) => {
         if (payload.new.status === 'finished') fetchGameState();
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [roomCode, fetchGameState]);
+  }, [roomCode, fetchGameState, playerName]);
 
-  useEffect(() => {
-    if (!isHost || !roomCode || setupMode) return;
-    const botInterval = setInterval(async () => {
-      const { players, room } = await fetchGameState();
-      if (!room || room.status !== 'playing') {
-        if (room?.status === 'finished') clearInterval(botInterval);
-        return;
-      }
-      const humans = players.filter(p => !p.is_bot);
-      const bots = players.filter(p => p.is_bot && !p.finished);
-      if (bots.length > 0) {
-        const botUpdates = bots.map(async (bot) => {
-          if (Math.random() < 0.7) {
-            const newQ = bot.current_question + (Math.random() > 0.6 ? 2 : 1);
-            const botScoreAdd = Math.floor(400 * (Math.random() * 0.5 + 0.5));
-            const newScore = bot.score + botScoreAdd;
-            return supabase.from('players').update({ current_question: newQ, score: newScore, finished: newQ > totalQuestions }).eq('id', bot.id);
-          }
-          return null;
-        });
-        await Promise.all(botUpdates.filter(u => u !== null));
-      }
-      const activeHumans = humans.length;
-      if (activeHumans > 0 && humans.every(h => h.finished)) {
-        await supabase.from('rooms').update({ status: 'finished' }).eq('code', roomCode);
-        clearInterval(botInterval);
-      }
-    }, 2000);
-    return () => clearInterval(botInterval);
-  }, [isHost, roomCode, setupMode, fetchGameState]);
 
   const startGame = () => {
     const questionsCount = roomCode ? numQuestions : selectedQuestionCount;
@@ -200,7 +188,7 @@ export default function IshiharaGame() {
       setWrongCount(nwc);
     }
 
-    // Delay 1.5s before proceeding to next question
+    // Reduced delay to 300ms for faster gameplay
     setTimeout(() => {
       if (roomCode) {
         supabase.from('players').update({
@@ -219,7 +207,7 @@ export default function IshiharaGame() {
       } else {
         handleFinishGame(ns, nwc, ncc);
       }
-    }, 1500);
+    }, 300);
   };
 
   const handleFinishGame = async (fs, fwc, fcc) => {

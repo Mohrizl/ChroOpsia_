@@ -83,20 +83,47 @@ export default function ColorRaceGame() {
   }, []);
 
   const fetchGameState = useCallback(async () => {
-    const { data: pData } = await supabase.from('players').select('*').eq('room_code', roomCode);
+    if (!roomCode) return { players: [], room: null };
+
+    const { data: pData } = await supabase
+      .from('players')
+      .select('*')
+      .eq('room_code', roomCode);
+      
     const sorted = (pData || []).sort((a, b) => b.score - a.score);
     setAllPlayers(sorted);
-    const { data: rData } = await supabase.from('rooms').select('*').eq('code', roomCode).single();
+
+    const { data: rData } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('code', roomCode)
+      .single();
+
     if (rData?.status === 'finished') {
       setTimeout(() => {
-        navigate('/score', { state: { ...location.state, score: scoreRef.current, mode: 'Color Race', correctCount: correctRef.current, allPlayers: sorted } });
+        navigate('/score', { 
+          state: { 
+            ...location.state, 
+            score: scoreRef.current, 
+            mode: 'Color Race', 
+            correctCount: correctRef.current, 
+            allPlayers: sorted,
+            numQuestions: totalQuestions
+          } 
+        });
       }, 500);
     }
+
+    if (rData?.status === 'playing' && sorted.length > 0 && sorted.every(p => p.finished)) {
+      await supabase.from('rooms').update({ status: 'finished' }).eq('code', roomCode);
+    }
+
     return { players: sorted, room: rData };
   }, [roomCode, navigate, location.state]);
 
   useEffect(() => {
     if (roomCode) {
+      fetchGameState();
       supabase.from('rooms').select('*').eq('code', roomCode).single().then(({ data }) => {
         if (data) {
           setTimePerQuestion(data.time_limit || 20);
@@ -106,48 +133,76 @@ export default function ColorRaceGame() {
         }
       });
     }
-  }, [roomCode, isHost, generateColors]);
+  }, [roomCode, isHost, generateColors, fetchGameState]);
 
   useEffect(() => {
     if (!roomCode) return;
-    fetchGameState();
-    const channel = supabase.channel(`game-cr-${roomCode}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, () => { fetchGameState(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` }, (payload) => { if (payload.new.status === 'finished') fetchGameState(); })
+
+    const channel = supabase.channel(`room:${roomCode}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'players',
+          filter: `room_code=eq.${roomCode}`
+        },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            setAllPlayers((prevList) => prevList.filter(p => p.id !== payload.old.id));
+            return;
+          }
+
+          if (payload.new && Object.keys(payload.new).length > 0) {
+            setAllPlayers((prevList) => {
+              const exists = prevList.find(p => p.id === payload.new.id);
+              let updatedList;
+              if (exists) {
+                updatedList = prevList.map(p => p.id === payload.new.id ? payload.new : p);
+              } else {
+                updatedList = [...prevList, payload.new];
+              }
+              return updatedList.sort((a, b) => b.score - a.score);
+            });
+
+            if (payload.new.name === playerName) {
+              setScore(payload.new.score);
+              setCorrectCount(payload.new.correct_count || 0);
+            }
+          }
+        }
+      )
+      .on(
+        'postgres_changes', 
+        { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'rooms', 
+          filter: `code=eq.${roomCode}` 
+        }, 
+        (payload) => {
+          if (payload.new && payload.new.status === 'finished') {
+            fetchGameState();
+          }
+        }
+      )
       .subscribe();
+
     return () => { supabase.removeChannel(channel); };
-  }, [roomCode, fetchGameState]);
+  }, [roomCode, playerName, fetchGameState]);
 
   useEffect(() => {
-    if (!isHost || !roomCode || setupMode) return;
-    const botInterval = setInterval(async () => {
-      const { players, room } = await fetchGameState();
-      if (!room || room.status !== 'playing') {
-        if (room?.status === 'finished') clearInterval(botInterval);
-        return;
+    const handleLeave = () => {
+      if (roomCode && playerName) {
+        supabase.from('players').delete().eq('room_code', roomCode).eq('name', playerName).then();
       }
-      const humans = players.filter(p => !p.is_bot);
-      const bots = players.filter(p => p.is_bot && !p.finished);
-      if (bots.length > 0) {
-        const botUpdates = bots.map(async (bot) => {
-          if (Math.random() < 0.6) {
-            const newQ = bot.current_question + (Math.random() > 0.7 ? 2 : 1);
-            const botScoreAdd = Math.floor(400 * (Math.random() * 0.5 + 0.5));
-            const newScore = bot.score + botScoreAdd;
-            return supabase.from('players').update({ current_question: newQ, score: newScore, finished: newQ > totalQuestions }).eq('id', bot.id);
-          }
-          return null;
-        });
-        await Promise.all(botUpdates.filter(u => u !== null));
-      }
-      const activeHumans = humans.length;
-      if (activeHumans > 0 && humans.every(h => h.finished)) {
-        await supabase.from('rooms').update({ status: 'finished' }).eq('code', roomCode);
-        clearInterval(botInterval);
-      }
-    }, 2000);
-    return () => clearInterval(botInterval);
-  }, [isHost, roomCode, setupMode, fetchGameState]);
+    };
+
+    window.addEventListener('beforeunload', handleLeave);
+    return () => {
+      window.removeEventListener('beforeunload', handleLeave);
+    };
+  }, [roomCode, playerName]);
 
   const startGame = () => {
     setSetupMode(false);
@@ -177,7 +232,13 @@ export default function ColorRaceGame() {
   const handleFinishGame = async (fs, fcc) => {
     if (roomCode) {
       setWaitingForOthers(true);
-      await supabase.from('players').update({ finished: true, score: fs, correct_count: fcc }).eq('room_code', roomCode).eq('name', playerName);
+      await supabase
+        .from('players')
+        .update({ finished: true, score: fs, correct_count: fcc })
+        .eq('room_code', roomCode)
+        .eq('name', playerName);
+      
+      fetchGameState();
     } else {
       navigate('/score', {
         state: {
@@ -191,25 +252,36 @@ export default function ColorRaceGame() {
     }
   };
 
-
-
   const handleGuess = (color) => {
     if (isProcessing || showAnswer) return;
     if (answerTimeoutRef.current) clearTimeout(answerTimeoutRef.current);
+
     if (color === targetColor) {
       setIsProcessing(true);
       setShowAnswer(true);
       const pts = Math.max(50, Math.floor(400 * (timeLeft / timePerQuestion)));
-      const ns = score + pts; const ncc = correctCount + 1;
-      setScore(ns); setCorrectCount(ncc);
+      const ns = score + pts;
+      const ncc = correctCount + 1;
+
+      setScore(ns);
+      setCorrectCount(ncc);
       setScorePopups(prev => [...prev, { id: Date.now(), val: pts }]);
       setTimeout(() => setScorePopups(prev => prev.slice(1)), 1000);
 
-      answerTimeoutRef.current = setTimeout(() => {
-        if (roomCode) { supabase.from('players').update({ score: ns, current_question: currentQuestion + 1, correct_count: ncc, finished: currentQuestion >= totalQuestions }).eq('room_code', roomCode).eq('name', playerName).then(); }
+      answerTimeoutRef.current = setTimeout(async () => {
+        if (roomCode) {
+          await supabase.from('players').update({
+            score: ns,
+            current_question: currentQuestion + 1,
+            correct_count: ncc,
+            finished: currentQuestion >= totalQuestions
+          }).eq('room_code', roomCode).eq('name', playerName);
+        }
         nextQuestion();
-      }, 1500);
-    } else { setTimeLeft(t => Math.max(0, t - 3)); }
+      }, 300);
+    } else {
+      setTimeLeft(t => Math.max(0, t - 3));
+    }
   };
 
   useEffect(() => {
@@ -217,14 +289,26 @@ export default function ColorRaceGame() {
     const timer = setInterval(() => {
       setTimeLeft(t => {
         if (t <= 0) {
-          if (!isProcessing) { setIsProcessing(true); setShowAnswer(true); answerTimeoutRef.current = setTimeout(() => nextQuestion(), 800); }
+          if (!isProcessing) { 
+            setIsProcessing(true); 
+            setShowAnswer(true); 
+            answerTimeoutRef.current = setTimeout(async () => {
+              if (roomCode) {
+                await supabase.from('players').update({
+                  current_question: currentQuestion + 1,
+                  finished: currentQuestion >= totalQuestions
+                }).eq('room_code', roomCode).eq('name', playerName);
+              }
+              nextQuestion();
+            }, 800); 
+          }
           return 0;
         }
         return t - 1;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [setupMode, waitingForOthers, currentQuestion, timePerQuestion, isProcessing, showAnswer]);
+  }, [setupMode, waitingForOthers, currentQuestion, timePerQuestion, isProcessing, showAnswer, roomCode, playerName]);
 
   useEffect(() => {
     return () => {
@@ -259,8 +343,8 @@ export default function ColorRaceGame() {
           <p style={{ color: 'var(--primary)', fontSize: '1rem', fontWeight: '600', marginBottom: '1.5rem', opacity: 0.9 }}>Waiting for everyone to cross the finish line...</p>
           <div className="loader" style={{ margin: '0 auto 2rem auto', width: '30px', height: '30px' }}></div>
           <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1rem', textAlign: 'left' }}>
-            {allPlayers.map(p => (
-              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.85rem', color: p.finished ? 'var(--success)' : 'white' }}>
+            {allPlayers.map((p, idx) => (
+              <div key={p.id || idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.85rem', color: p.finished ? 'var(--success)' : 'white' }}>
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '0.5rem' }}>{p.name} {p.name === playerName && '(You)'}</span>
                 <span style={{ fontWeight: 'bold' }}>{p.score}</span>
               </div>
@@ -323,7 +407,7 @@ export default function ColorRaceGame() {
             <h3 style={{ marginBottom: '0.6rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Users size={16} /> Live Ranks</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.5rem' }}>
               {allPlayers.map((p, idx) => (
-                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.8rem', background: p.name === (playerName || 'You') ? 'var(--input-bg)' : 'var(--panel-bg)', borderRadius: '10px', border: p.name === (playerName || 'You') ? '1px solid var(--primary)' : '1px solid transparent', alignItems: 'center', minHeight: '40px' }}>
+                <div key={p.id || idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.8rem', background: p.name === (playerName || 'You') ? 'var(--input-bg)' : 'var(--panel-bg)', borderRadius: '10px', border: p.name === (playerName || 'You') ? '1px solid var(--primary)' : '1px solid transparent', alignItems: 'center', minHeight: '40px' }}>
                   <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 'bold' }}>{idx + 1}</span>
                     <span style={{ fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-main)' }}>{p.name}</span>

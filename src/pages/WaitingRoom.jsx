@@ -40,6 +40,18 @@ export default function WaitingRoom() {
   const chatEndRef = useRef(null);
   const channelRef = useRef(null);
 
+  // Menyimpan data player aktif ke ref agar selalu mendapatkan snapshot terbaru di dalam callback realtime
+  const playersRef = useRef(players);
+  useEffect(() => {
+    playersRef.current = players;
+  }, [players]);
+
+  // Menyimpan playerName ke ref agar realtime block tidak tertinggal oleh stale closure
+  const playerNameRef = useRef(playerName);
+  useEffect(() => {
+    playerNameRef.current = playerName;
+  }, [playerName]);
+
   const fetchRoomData = useCallback(async () => {
     if (!roomCode) {
       setError("Room code is missing. Please join through the lobby.");
@@ -68,6 +80,7 @@ export default function WaitingRoom() {
         console.error('Players fetch error:', playersError);
         return;
       }
+
       setPlayers(playersData || []);
       return { room: roomData, players: playersData || [] };
     } catch (err) {
@@ -115,15 +128,15 @@ export default function WaitingRoom() {
   useEffect(() => {
     if (!showInviteModal || !roomCode) return;
     getRoomMemberAuthIds(roomCode).then(setRoomMemberIds);
-  }, [showInviteModal, roomCode, players]);
+  }, [showInviteModal, roomCode]);
 
   useEffect(() => {
     if (!roomCode) return;
     fetchRoomData();
 
-    const channel = supabase.channel(`chat-${roomCode}`, {
+    const channel = supabase.channel(`room-channel-${roomCode}`, {
       config: {
-        presence: { key: playerName },
+        presence: { key: playerNameRef.current },
         broadcast: { self: false }
       }
     });
@@ -134,29 +147,34 @@ export default function WaitingRoom() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms', filter: `code=eq.${roomCode}` }, (payload) => {
         const newRoom = payload.new;
         setRoom(newRoom);
-        if (newRoom.status === 'playing') {
+        if (newRoom && newRoom.status === 'playing') {
           navigate(`/game/${newRoom.game_type}`, {
-            state: { ...location.state, gameType: newRoom.game_type, playerName: playerName }
+            state: { ...location.state, gameType: newRoom.game_type, playerName: playerNameRef.current }
           });
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${roomCode}` }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, (payload) => {
         if (payload.eventType === 'DELETE') {
           const oldP = payload.old;
-          const targetPlayerBeforeDelete = players.find(p => p.id === oldP.id);
-          const isMe = targetPlayerBeforeDelete && targetPlayerBeforeDelete.name === playerName;
 
-          if (isMe) {
-            sessionStorage.removeItem('chro_current_room');
-            alert("You have been kicked.");
-            navigate('/lobby', { replace: true });
-            return;
+          const targetPlayer = playersRef.current.find(p => String(p.id) === String(oldP.id));
+
+          if (targetPlayer) {
+            const isMeKicked = targetPlayer.name === playerNameRef.current;
+
+            if (isMeKicked) {
+              sessionStorage.removeItem('chro_current_room');
+              supabase.removeChannel(channel);
+              alert("Kamu telah dikeluarkan dari room oleh host.");
+              navigate('/lobby', { replace: true });
+              return;
+            }
           }
         }
         fetchRoomData();
       })
       .on('broadcast', { event: 'chat' }, (payload) => {
-        if (payload.payload && payload.payload.sender !== playerName) {
+        if (payload.payload && payload.payload.sender !== playerNameRef.current) {
           setMessages(prev => {
             const exists = prev.some(m => m.id === payload.payload.id);
             if (exists) return prev;
@@ -171,14 +189,13 @@ export default function WaitingRoom() {
         onlineKeys.forEach(key => { online[key] = true; });
         setOnlinePlayers(online);
 
-        // Host promotion logic
         const { data: latestRoom } = await supabase.from('rooms').select('host_name').eq('code', roomCode).single();
         if (latestRoom && !online[latestRoom.host_name]) {
           const { data: currentPlayers } = await supabase.from('players').select('*').eq('room_code', roomCode).order('id', { ascending: true });
-          const humans = (currentPlayers || []).filter(p => !p.is_bot && online[p.name]);
-          if (humans.length > 0 && humans[0].name === playerName) {
+          const onlinePlayers = (currentPlayers || []).filter(p => online[p.name]);
+          if (onlinePlayers.length > 0 && onlinePlayers[0].name === playerNameRef.current) {
             console.log("Promoting self to host due to current host absence...");
-            const { error: promoErr } = await supabase.from('rooms').update({ host_name: playerName }).eq('code', roomCode);
+            const { error: promoErr } = await supabase.from('rooms').update({ host_name: playerNameRef.current }).eq('code', roomCode);
             if (!promoErr) fetchRoomData();
           }
         }
@@ -192,9 +209,8 @@ export default function WaitingRoom() {
       });
 
     return () => { supabase.removeChannel(channel); };
-  }, [roomCode, navigate, location.state, playerName, fetchRoomData, session]);
+  }, [roomCode, navigate, location.state, session, fetchRoomData]);
 
-  // Real-time search logic for Invite Modal
   useEffect(() => {
     const searchUsers = async () => {
       if (searchQuery.length < 2) {
@@ -217,7 +233,6 @@ export default function WaitingRoom() {
         } else {
           const filtered = data.filter((u) => !roomMemberIds.has(u.id));
 
-          // Check if searched users are currently in a game
           const userIds = filtered.map(u => u.id);
           const activeGames = await getUsersActiveGames(userIds);
 
@@ -269,15 +284,12 @@ export default function WaitingRoom() {
       await supabase.from('players').delete().eq('room_code', roomCode).eq('name', playerName);
     }
     setCurrentRoomCode(null);
-    const { data: remainingPlayers } = await supabase.from('players').select('is_bot, name').eq('room_code', roomCode);
-    const humans = (remainingPlayers || []).filter(p => !p.is_bot);
+    const { data: remainingPlayers } = await supabase.from('players').select('name').eq('room_code', roomCode);
 
-    if (humans.length === 0) {
-      // Delete room if no humans left
+    if (!remainingPlayers || remainingPlayers.length === 0) {
       await supabase.from('rooms').delete().eq('code', roomCode);
     } else if (isHost) {
-      // Pass host to next human
-      const nextHost = humans[0];
+      const nextHost = remainingPlayers[0];
       if (nextHost) {
         await supabase.from('rooms').update({ host_name: nextHost.name }).eq('code', roomCode);
       }
@@ -285,23 +297,9 @@ export default function WaitingRoom() {
     navigate('/lobby', { replace: true });
   };
 
-  const handleAddBot = async () => {
-    const difficulties = ['Skilled', 'Fast', 'Random', 'Expert'];
-    const diff = difficulties[Math.floor(Math.random() * difficulties.length)];
-    const botName = `Bot_${diff}_${Math.floor(Math.random() * 100)}`;
-    await supabase.from('players').insert([{
-      room_code: roomCode,
-      name: botName,
-      is_bot: true,
-      difficulty: diff,
-      ready: true,
-      score: 0,
-      current_question: 1
-    }]);
-  };
-
-  const handleKick = async (targetName) => {
-    await supabase.from('players').delete().eq('room_code', roomCode).eq('name', targetName);
+  const handleKick = async (targetPlayer) => {
+    setPlayers(prev => prev.filter(p => p.id !== targetPlayer.id));
+    await supabase.from('players').delete().eq('room_code', roomCode).eq('id', targetPlayer.id);
   };
 
   const toggleReady = async () => {
@@ -312,12 +310,11 @@ export default function WaitingRoom() {
   };
 
   const handleStartGame = async () => {
-    const othersReady = players.filter(p => p.name !== playerName && !p.is_bot).every(p => p.ready);
+    const othersReady = players.filter(p => p.name !== playerName).every(p => p.ready);
     if (!othersReady) { alert("Semua pemain harus Ready!"); return; }
 
     const selectedGameType = room.game_type || initialGameType || 'color-race';
 
-    // Set all players to starting state
     await supabase.from('players').update({
       score: 0,
       current_question: 1,
@@ -327,7 +324,6 @@ export default function WaitingRoom() {
       wrong_count: 0
     }).eq('room_code', roomCode);
 
-    // Set room to playing
     await supabase.from('rooms').update({
       status: 'playing',
       game_type: selectedGameType
@@ -473,19 +469,19 @@ export default function WaitingRoom() {
               </div>
             )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-              {players.sort((a, b) => (a.name === room.host_name ? -1 : b.name === room.host_name ? 1 : 0)).map((p) => (
+              {[...players].sort((a, b) => (a.name === room.host_name ? -1 : b.name === room.host_name ? 1 : 0)).map((p) => (
                 <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.8rem 1rem', background: p.name === playerName ? 'rgba(99, 102, 241, 0.1)' : 'transparent', borderRadius: '12px', border: p.name === playerName ? '1px solid var(--primary)' : '1px solid transparent' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', minWidth: 0 }}>
                     {p.name === room.host_name && <Crown size={18} color="#fbbf24" style={{ flexShrink: 0 }} />}
                     <span style={{ fontWeight: p.name === playerName ? '800' : '500', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.95rem', display: 'flex', alignItems: 'center' }}>
-                      {!p.is_bot && <span className="online-dot" style={{ background: onlinePlayers[p.name] ? 'var(--success)' : '#94a3b8' }}></span>}
-                      {p.name} {p.name === playerName && '(You)'} {p.is_bot && '[Bot]'}
+                      <span className="online-dot" style={{ background: onlinePlayers[p.name] ? 'var(--success)' : '#94a3b8' }}></span>
+                      {p.name} {p.name === playerName && '(You)'}
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexShrink: 0 }}>
-                    {(p.name === room.host_name) || p.is_bot || p.ready ? <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', fontWeight: '700' }}><CheckCircle size={16} /> Ready</span> : <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: '500' }}>Waiting...</span>}
+                    {(p.name === room.host_name) || p.ready ? <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem', fontWeight: '700' }}><CheckCircle size={16} /> Ready</span> : <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: '500' }}>Waiting...</span>}
                     {isHost && p.name !== playerName && (
-                      <button onClick={() => handleKick(p.name)} className="kick-btn" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444', cursor: 'pointer', padding: '0.4rem', borderRadius: '10px' }} title="Kick Player"><UserMinus size={18} /></button>
+                      <button onClick={() => handleKick(p)} className="kick-btn" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444', cursor: 'pointer', padding: '0.4rem', borderRadius: '10px' }} title="Kick Player"><UserMinus size={18} /></button>
                     )}
                   </div>
                 </div>
@@ -495,11 +491,6 @@ export default function WaitingRoom() {
 
           <div style={{ display: 'flex', gap: '1rem', flexDirection: 'column' }}>
             <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-              {isHost && players.length < 8 && (
-                <button className="btn btn-secondary" style={{ flex: 1, minWidth: '140px', maxWidth: '200px' }} onClick={handleAddBot}>
-                  + Add Bot
-                </button>
-              )}
               {localStorage.getItem('isGuest') !== 'true' && (
                 <button className="btn btn-secondary" style={{ flex: 1, minWidth: '140px', maxWidth: '200px' }} onClick={() => setShowInviteModal(true)}>
                   <UserPlus size={18} /> Invite Friend
