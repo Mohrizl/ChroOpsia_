@@ -17,10 +17,10 @@ ChroOpsia adalah aplikasi web berbasis **React + Vite** untuk permainan pengenal
 
 ## Prasyarat
 
-| Tool | Versi disarankan |
-|------|------------------|
-| Node.js | 18+ |
-| npm | 9+ |
+| Tool                                  |     Versi     |
+|---------------------------------------|---------------|
+| Node.js                               | 18+           |
+| npm                                   | 9+            |
 | Akun [Supabase](https://supabase.com) | Project aktif |
 
 ---
@@ -91,12 +91,12 @@ npm run preview
 
 ## Struktur Database (Ringkas)
 
-| Tabel | Fungsi |
-|-------|--------|
-| `rooms` | Data room (`code`, host, status, game_type, …) |
-| `players` | Pemain di room; **`id` = UUID auth user** (`session.user.id`) |
-| `profiles` | Daftar akun terdaftar (untuk pencarian & undangan) |
-| `invites` | Log undangan (`from_id`, `to_id`, `room_code`, `status`) |
+| Tabel      |                         Fungsi                                |
+|------------|---------------------------------------------------------------|
+| `rooms`    | Data room (`code`, host, status, game_type, …)                |
+| `players`  | Pemain di room; **`id` = UUID auth user** (`session.user.id`) |
+| `profiles` | Daftar akun terdaftar (untuk pencarian & undangan)            |
+| `invites`  | Log undangan (`from_id`, `to_id`, `room_code`, `status`)      |
 
 **Konvensi penamaan di kode:**
 
@@ -116,7 +116,7 @@ npm run preview
 
 ---
 
-## Struktur Folder Penting
+## Struktur Folder
 
 ```
 src/
@@ -142,16 +142,11 @@ supabase/
 
 ## Troubleshooting
 
-| Gejala | Solusi |
-|--------|--------|
-| Pencarian user kosong | Jalankan `setup_profiles_and_invites.sql`; pastikan user pernah login |
-| Tabel `invites` tetap 0 baris | Jalankan `fix_invites_rls.sql`; pastikan pengirim **login** (bukan guest) |
-| Status selalu Offline | Kedua akun harus login; buka web di tab terpisah |
-| Terima undangan tapi pemain tetap 1 | Deploy versi terbaru; `joinRoomAsPlayer` harus insert ke `players` |
-| Undangan muncul padahal sudah 1 room | Pastikan `players.id` = UUID auth; host join ulang setelah update |
+| Gejala                               |                                Solusi                                     |
+|--------------------------------------|---------------------------------------------------------------------------|
+| Pencarian user kosong                | Jalankan `setup_profiles_and_invites.sql`; pastikan user pernah login     |
+| Tabel `invites` tetap 0 baris        | Jalankan `fix_invites_rls.sql`; pastikan pengirim **login** (bukan guest) |
+| Status selalu Offline                | Kedua akun harus login; buka web di tab terpisah                          |
+| Terima undangan tapi pemain tetap 1  | Deploy versi terbaru; `joinRoomAsPlayer` harus insert ke `players`        |
+| Undangan muncul padahal sudah 1 room | Pastikan `players.id` = UUID auth; host join ulang setelah update         |
 
----
-
-## Lisensi & Kredit
-
-Proyek pembelajaran Pemrograman Web — ChroOpsia Team.
